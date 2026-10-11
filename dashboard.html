@@ -1,0 +1,133 @@
+<!DOCTYPE html>
+<html lang="uk">
+<head>
+<meta charset="utf-8">
+<title>Auto Meet</title>
+<style>
+  :root { color-scheme: dark; }
+  * { box-sizing: border-box; }
+  html, body {
+    height: 100%; margin: 0;
+    background: radial-gradient(circle at 50% 0%, #1c2333, #0b0e16 65%);
+    color: #eef1f8;
+    font-family: -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    display: flex; align-items: center; justify-content: center;
+  }
+  .card {
+    text-align: center;
+    padding: 48px 56px;
+    max-width: 640px;
+  }
+  .identity {
+    font-size: 20px;
+    letter-spacing: .02em;
+    color: #8ea2d6;
+    margin-bottom: 6px;
+  }
+  .phase {
+    font-size: 16px;
+    color: #7c8aae;
+    margin-bottom: 18px;
+  }
+  .timer {
+    font-size: 96px;
+    font-weight: 700;
+    font-variant-numeric: tabular-nums;
+    letter-spacing: .02em;
+    background: linear-gradient(180deg, #ffffff, #b9c6ee);
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
+    line-height: 1;
+  }
+  .label {
+    margin-top: 22px;
+    font-size: 26px;
+    font-weight: 600;
+  }
+  .sub {
+    margin-top: 6px;
+    font-size: 15px;
+    color: #8ea2d6;
+  }
+  .dot {
+    display: inline-block; width: 8px; height: 8px; border-radius: 50%;
+    background: #35d07f; margin-right: 8px; vertical-align: middle;
+    box-shadow: 0 0 10px #35d07f;
+  }
+  .dot.during { background: #ff9f43; box-shadow: 0 0 10px #ff9f43; }
+  .dot.none { background: #56607a; box-shadow: none; }
+  .updated { margin-top: 30px; font-size: 12px; color: #4d5875; }
+</style>
+</head>
+<body>
+  <div class="card">
+    <div class="identity" id="identity">Auto Meet</div>
+    <div class="phase"><span class="dot" id="dot"></span><span id="phaseText">Очікування розкладу…</span></div>
+    <div class="timer" id="timer">--:--:--</div>
+    <div class="label" id="label"></div>
+    <div class="sub" id="sub"></div>
+    <div class="updated" id="updated"></div>
+  </div>
+
+<script>
+let state = { phase: "none", target: null, label: "", pair: null, identity: "" };
+let tickHandle = null;
+
+function fmt(ms) {
+  if (ms < 0) ms = 0;
+  const total = Math.floor(ms / 1000);
+  const h = String(Math.floor(total / 3600)).padStart(2, "0");
+  const m = String(Math.floor((total % 3600) / 60)).padStart(2, "0");
+  const s = String(total % 60).padStart(2, "0");
+  return `${h}:${m}:${s}`;
+}
+
+function render() {
+  document.getElementById("identity").textContent = state.identity || "Auto Meet";
+  const dot = document.getElementById("dot");
+  const phaseText = document.getElementById("phaseText");
+  const timer = document.getElementById("timer");
+  const label = document.getElementById("label");
+  const sub = document.getElementById("sub");
+
+  dot.className = "dot " + (state.phase === "during" ? "during" : state.phase === "none" ? "none" : "");
+
+  if (state.phase === "none" || !state.target) {
+    phaseText.textContent = "Пар більше не заплановано";
+    timer.textContent = "--:--:--";
+    label.textContent = "";
+    sub.textContent = "";
+    return;
+  }
+
+  const diff = state.target - Date.now();
+  timer.textContent = fmt(diff);
+  label.textContent = state.label || "";
+  sub.textContent = state.pair ? `Пара №${state.pair}` : "";
+
+  if (state.phase === "during") {
+    phaseText.textContent = "Йде пара · до завершення";
+  } else {
+    phaseText.textContent = "До початку пари";
+  }
+
+  if (diff <= 0 && state.phase === "before") {
+    phaseText.textContent = "Заходимо…";
+  }
+}
+
+window.updateDashboard = function(payload) {
+  state = payload;
+  document.getElementById("updated").textContent =
+    "Оновлено: " + new Date().toLocaleTimeString("uk-UA");
+  render();
+};
+
+if (!tickHandle) {
+  tickHandle = setInterval(render, 1000);
+}
+render();
+</script>
+</body>
+</html>
