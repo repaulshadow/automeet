@@ -269,9 +269,11 @@ NO_TRANSLATE_JS = """
 """
 
 
-def find_browser():
-    """Повертає (channel, папка_профілю): Google Chrome, якщо встановлено, інакше Microsoft Edge
-    (він є на кожному Windows 10/11). Якщо немає жодного — (None, None)."""
+def browser_candidates():
+    """Список (channel, папка_профілю) у порядку спроб: Google Chrome, Microsoft Edge
+    (якщо встановлені) і наприкінці власний Chromium від Playwright, який
+    за потреби завантажується автоматично."""
+    out = []
     if IS_WINDOWS:
         roots = [os.environ.get(k) for k in ("LOCALAPPDATA", "PROGRAMFILES", "PROGRAMFILES(X86)")]
         chrome = [Path(r) / "Google" / "Chrome" / "Application" / "chrome.exe" for r in roots if r]
@@ -281,12 +283,23 @@ def find_browser():
                   Path.home() / "Applications" / "Google Chrome.app"]
         edge = [Path("/Applications/Microsoft Edge.app")]
     else:
-        return "chrome", PROFILE_DIR
+        chrome, edge = [Path("/")], []
     if any(p.exists() for p in chrome):
-        return "chrome", PROFILE_DIR
+        out.append(("chrome", PROFILE_DIR))
     if any(p.exists() for p in edge):
-        return "msedge", PROFILE_DIR.with_name(PROFILE_DIR.name + "_edge")
-    return None, None
+        out.append(("msedge", PROFILE_DIR.with_name(PROFILE_DIR.name + "_edge")))
+    out.append((None, PROFILE_DIR.with_name(PROFILE_DIR.name + "_chromium")))
+    return out
+
+
+def install_playwright_chromium():
+    """Одноразово завантажує Chromium від Playwright (~150 МБ), якщо інші браузери не підійшли."""
+    from playwright._impl._driver import compute_driver_executable, get_driver_env
+    node, cli = compute_driver_executable()
+    notify("Завантажую браузер (одноразово, кілька хвилин)…")
+    print("Завантажую Chromium (одноразово, ~150 МБ)…")
+    subprocess.run([str(node), str(cli), "install", "chromium"],
+                   env=get_driver_env(), check=True)
 
 
 def disable_translate_in_profile(profile_dir=None):
@@ -302,18 +315,9 @@ def disable_translate_in_profile(profile_dir=None):
     save_json(prefs_path, prefs)
 
 
-async def launch(p):
-    channel, profile_dir = find_browser()
-    if channel is None:
-        import webbrowser
-        webbrowser.open("https://www.google.com/chrome/")
-        notify("Не знайдено Google Chrome. Встановіть його та запустіть програму знову.")
-        raise RuntimeError("Не знайдено Google Chrome або Microsoft Edge. "
-                           "Встановіть Chrome: https://www.google.com/chrome/")
-    if channel != "chrome":
-        print("Google Chrome не знайдено — використовую Microsoft Edge.")
+async def _launch_once(p, channel, profile_dir):
     disable_translate_in_profile(profile_dir)
-    ctx = await p.chromium.launch_persistent_context(
+    return await p.chromium.launch_persistent_context(
         user_data_dir=str(profile_dir), channel=channel, headless=False,
         locale="uk-UA",
         args=["--use-fake-ui-for-media-stream", "--disable-blink-features=AutomationControlled",
@@ -321,6 +325,31 @@ async def launch(p):
         ignore_default_args=["--enable-automation"],
         permissions=[],
     )
+
+
+async def launch(p):
+    ctx = None
+    last_err = None
+    for channel, profile_dir in browser_candidates():
+        name = {"chrome": "Google Chrome", "msedge": "Microsoft Edge"}.get(channel, "Chromium")
+        try:
+            try:
+                ctx = await _launch_once(p, channel, profile_dir)
+            except Exception as e:
+                if channel is None and "Executable doesn't exist" in str(e):
+                    await asyncio.to_thread(install_playwright_chromium)
+                    ctx = await _launch_once(p, channel, profile_dir)
+                else:
+                    raise
+            if channel != "chrome":
+                print(f"Використовую {name}.")
+            break
+        except Exception as e:
+            last_err = e
+            print(f"Не вдалося запустити {name}: {str(e).splitlines()[0]}")
+    if ctx is None:
+        notify("Не вдалося запустити браузер.")
+        raise RuntimeError(f"Не вдалося запустити жоден браузер: {last_err}")
     # Явно выдаём доступ к камере/микрофону для Meet и Classroom, чтобы в настройках сайта
     # был виден статус "Allow", а не "Block" (само выключение камеры/микрофона делает attend()).
     for origin in ("https://meet.google.com", "https://classroom.google.com"):
