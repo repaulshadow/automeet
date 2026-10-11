@@ -39,6 +39,19 @@ STATE_FILE = HERE / "state.json"
 DASHBOARD_FILE = HERE / "dashboard.html"
 PROFILE_DIR = Path.home() / ".auto_meet_profile"
 
+
+def _default_browsers_path():
+    if platform.system() == "Windows":
+        return Path(os.environ.get("LOCALAPPDATA", str(Path.home()))) / "ms-playwright"
+    if platform.system() == "Darwin":
+        return Path.home() / "Library" / "Caches" / "ms-playwright"
+    return Path.home() / ".cache" / "ms-playwright"
+
+
+# У зібраному .exe Playwright за замовчуванням шукає браузер усередині тимчасової папки
+# розпакування, а завантажує — в іншу. Фіксуємо одну спільну папку для обох дій.
+os.environ["PLAYWRIGHT_BROWSERS_PATH"] = str(_default_browsers_path())
+
 DURATION_MIN = 80      # сколько сидеть на паре
 ASK_BEFORE_MIN = 10    # за сколько минут до пары показывать вопрос (если есть варианты)
 JOIN_BEFORE_MIN = 1    # за сколько минут заходить
