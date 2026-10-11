@@ -48,3 +48,25 @@ jobs:
         with:
           name: AutoMeet-macos
           path: dist/AutoMeet-mac.tar.gz
+
+  macos-intel:
+    runs-on: macos-15-intel   # Mac з процесором Intel
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: pip install playwright==1.48.0 pyinstaller==6.11.1
+
+      - name: Build AutoMeet (macOS Intel)
+        run: |
+          pyinstaller --onefile --name AutoMeet --collect-all playwright auto_meet.py
+          tar -czf dist/AutoMeet-mac-intel.tar.gz -C dist AutoMeet
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: AutoMeet-macos-intel
+          path: dist/AutoMeet-mac-intel.tar.gz
