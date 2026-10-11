@@ -12,7 +12,6 @@ Auto Meet для Google Chrome. Работает на macOS и Windows — си�
 
 Установка:
   pip install playwright
-  (на Windows дополнительно, для системных уведомлений)  pip install win10toast
 """
 import asyncio
 import hashlib
@@ -66,6 +65,17 @@ IS_MAC = platform.system() == "Darwin"
 IS_WINDOWS = platform.system() == "Windows"
 
 
+_PS_TOAST = r"""
+[Windows.UI.Notifications.ToastNotificationManager, Windows.UI.Notifications, ContentType = WindowsRuntime] | Out-Null
+$t = [Windows.UI.Notifications.ToastNotificationManager]::GetTemplateContent([Windows.UI.Notifications.ToastTemplateType]::ToastText02)
+$n = $t.GetElementsByTagName('text')
+$n.Item(0).AppendChild($t.CreateTextNode('Auto Meet')) | Out-Null
+$n.Item(1).AppendChild($t.CreateTextNode($env:AM_TEXT)) | Out-Null
+$id = '{1AC14E77-02E7-4E5D-B744-2EB1AE5198B7}\WindowsPowerShell\v1.0\powershell.exe'
+[Windows.UI.Notifications.ToastNotificationManager]::CreateToastNotifier($id).Show([Windows.UI.Notifications.ToastNotification]::new($t))
+"""
+
+
 def notify(text):
     """Системное уведомление: через osascript на macOS, через toast на Windows,
     через notify-send на Linux (если он есть). Если ничего не сработало — просто
@@ -76,8 +86,14 @@ def notify(text):
             return
         if IS_WINDOWS:
             try:
-                from win10toast import ToastNotifier
-                ToastNotifier().show_toast("Auto Meet", text, duration=8, threaded=True)
+                # Власний тост через PowerShell: працює без сторонніх бібліотек
+                # (win10toast ламається всередині зібраного .exe).
+                print(f"[сповіщення] {text}")
+                subprocess.Popen(
+                    ["powershell", "-NoProfile", "-NonInteractive", "-WindowStyle", "Hidden",
+                     "-Command", _PS_TOAST],
+                    env={**os.environ, "AM_TEXT": text}, creationflags=0x08000000,
+                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
                 return
             except Exception:
                 pass
@@ -253,9 +269,29 @@ NO_TRANSLATE_JS = """
 """
 
 
-def disable_translate_in_profile():
+def find_browser():
+    """Повертає (channel, папка_профілю): Google Chrome, якщо встановлено, інакше Microsoft Edge
+    (він є на кожному Windows 10/11). Якщо немає жодного — (None, None)."""
+    if IS_WINDOWS:
+        roots = [os.environ.get(k) for k in ("LOCALAPPDATA", "PROGRAMFILES", "PROGRAMFILES(X86)")]
+        chrome = [Path(r) / "Google" / "Chrome" / "Application" / "chrome.exe" for r in roots if r]
+        edge = [Path(r) / "Microsoft" / "Edge" / "Application" / "msedge.exe" for r in roots if r]
+    elif IS_MAC:
+        chrome = [Path("/Applications/Google Chrome.app"),
+                  Path.home() / "Applications" / "Google Chrome.app"]
+        edge = [Path("/Applications/Microsoft Edge.app")]
+    else:
+        return "chrome", PROFILE_DIR
+    if any(p.exists() for p in chrome):
+        return "chrome", PROFILE_DIR
+    if any(p.exists() for p in edge):
+        return "msedge", PROFILE_DIR.with_name(PROFILE_DIR.name + "_edge")
+    return None, None
+
+
+def disable_translate_in_profile(profile_dir=None):
     """Прописываем в профиле Chrome: переводчик выключен, украинский/русский/английский не переводить."""
-    prefs_path = PROFILE_DIR / "Default" / "Preferences"
+    prefs_path = (profile_dir or PROFILE_DIR) / "Default" / "Preferences"
     prefs_path.parent.mkdir(parents=True, exist_ok=True)
     prefs = load_json(prefs_path, {})
     prefs.setdefault("translate", {})["enabled"] = False
@@ -267,9 +303,18 @@ def disable_translate_in_profile():
 
 
 async def launch(p):
-    disable_translate_in_profile()
+    channel, profile_dir = find_browser()
+    if channel is None:
+        import webbrowser
+        webbrowser.open("https://www.google.com/chrome/")
+        notify("Не знайдено Google Chrome. Встановіть його та запустіть програму знову.")
+        raise RuntimeError("Не знайдено Google Chrome або Microsoft Edge. "
+                           "Встановіть Chrome: https://www.google.com/chrome/")
+    if channel != "chrome":
+        print("Google Chrome не знайдено — використовую Microsoft Edge.")
+    disable_translate_in_profile(profile_dir)
     ctx = await p.chromium.launch_persistent_context(
-        user_data_dir=str(PROFILE_DIR), channel="chrome", headless=False,
+        user_data_dir=str(profile_dir), channel=channel, headless=False,
         locale="uk-UA",
         args=["--use-fake-ui-for-media-stream", "--disable-blink-features=AutomationControlled",
               "--lang=uk-UA", "--accept-lang=uk-UA,uk"],

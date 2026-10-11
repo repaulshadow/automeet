@@ -16,10 +16,10 @@ jobs:
           python-version: "3.11"
 
       - name: Install dependencies
-        run: pip install playwright==1.48.0 win10toast==0.9 pyinstaller==6.11.1
+        run: pip install playwright==1.48.0 pyinstaller==6.11.1
 
       - name: Build AutoMeet.exe
-        run: pyinstaller --onefile --name AutoMeet --hidden-import=win10toast --collect-all playwright auto_meet.py
+        run: pyinstaller --onefile --name AutoMeet --collect-all playwright auto_meet.py
 
       - uses: actions/upload-artifact@v4
         with:
