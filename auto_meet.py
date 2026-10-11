@@ -919,10 +919,19 @@ def check_for_updates():
     updated = []
 
     def fetch(name):
-        req = urllib.request.Request(UPDATE_URL + name, headers={
-            "Cache-Control": "no-cache", "User-Agent": "AutoMeet-updater"})
-        with urllib.request.urlopen(req, timeout=8) as r:
-            return r.read()
+        try:
+            req = urllib.request.Request(UPDATE_URL + name, headers={
+                "Cache-Control": "no-cache", "User-Agent": "AutoMeet-updater"})
+            with urllib.request.urlopen(req, timeout=8) as r:
+                return r.read()
+        except Exception:
+            # Python з python.org на macOS часто не має кореневих сертифікатів
+            # (помилка SSL) — тоді качаємо через системний curl, який їх має.
+            r = subprocess.run(["curl", "-fsSL", "--max-time", "15", UPDATE_URL + name],
+                               capture_output=True, timeout=30)
+            if r.returncode != 0:
+                raise RuntimeError(f"curl: код {r.returncode}")
+            return r.stdout
 
     try:
         manifest = json.loads(fetch("manifest.json").decode("utf-8"))
@@ -948,8 +957,8 @@ def check_for_updates():
             tmp.write_bytes(data)
             tmp.replace(target)
             updated.append(name)
-    except Exception:
-        pass
+    except Exception as e:
+        print("Перевірка оновлень не вдалася:", e)
     return updated
 
 
