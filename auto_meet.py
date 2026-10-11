@@ -135,30 +135,80 @@ def gui_choose(prompt, items, default=None, timeout=600):
         out = r.stdout.strip()
         return None if out in ("", "false") else out
 
-    # Windows / Linux — простое окно на Tkinter (стандартная библиотека Python)
+    # Windows / Linux — окно на Tkinter (входит в стандартный Python)
     import tkinter as tk
 
     result = {"value": None}
     root = tk.Tk()
     root.title("Auto Meet")
     root.attributes("-topmost", True)
-    tk.Label(root, text=prompt, wraplength=380, justify="left", padx=12, pady=10).pack()
-    listbox = tk.Listbox(root, height=min(len(items), 8), width=50)
+    tk.Label(root, text=prompt, wraplength=420, justify="left", padx=14, pady=10,
+             font=("Segoe UI", 11)).pack(anchor="w")
+    frame = tk.Frame(root)
+    frame.pack(padx=14, pady=4, fill="both", expand=True)
+    scroll = tk.Scrollbar(frame)
+    listbox = tk.Listbox(frame, height=min(max(len(items), 3), 14), width=48,
+                         font=("Segoe UI", 12), activestyle="dotbox",
+                         exportselection=False, yscrollcommand=scroll.set)
+    scroll.config(command=listbox.yview)
     for i, item in enumerate(items):
         listbox.insert(tk.END, item)
-        if item == default:
-            listbox.selection_set(i)
-    listbox.pack(padx=12, pady=6)
+    start = items.index(default) if default in items else 0
+    listbox.selection_set(start)
+    listbox.see(start)
+    listbox.pack(side="left", fill="both", expand=True)
+    if len(items) > 14:
+        scroll.pack(side="right", fill="y")
 
-    def confirm():
+    def confirm(event=None):
         sel = listbox.curselection()
         result["value"] = items[sel[0]] if sel else default
         root.destroy()
 
-    tk.Button(root, text="OK", command=confirm, width=14).pack(pady=10)
+    def cancel(event=None):
+        root.destroy()
+
+    listbox.bind("<Double-Button-1>", confirm)
+    root.bind("<Return>", confirm)
+    root.bind("<Escape>", cancel)
+    bar = tk.Frame(root)
+    bar.pack(pady=10)
+    tk.Button(bar, text="OK", command=confirm, width=14).pack(side="left", padx=6)
+    tk.Button(bar, text="Скасувати", command=cancel, width=14).pack(side="left", padx=6)
+    root.update_idletasks()
+    w, h = root.winfo_reqwidth(), root.winfo_reqheight()
+    root.geometry(f"+{(root.winfo_screenwidth() - w) // 2}+{max((root.winfo_screenheight() - h) // 3, 0)}")
+    listbox.focus_set()
     root.after(int(timeout * 1000), root.destroy)  # автозакрытие по таймауту
     root.mainloop()
     return result["value"]
+
+
+def group_course(name):
+    """Курс групи: перша цифра після дефіса (КІ-31 -> 3, АС+БО-11 -> 1)."""
+    m = re.search(r"-\s*(\d)", name)
+    return int(m.group(1)) if m else 0
+
+
+def choose_group(groups, default=None):
+    """Двокроковий вибір: спочатку курс, потім група зі списку цього курсу (за абеткою)."""
+    by_course = {}
+    for g in groups:
+        by_course.setdefault(group_course(g), []).append(g)
+    courses = sorted(by_course)
+    labels = {c: (f"{c} курс" if c else "Інші") + f"  ({len(by_course[c])} груп)" for c in courses}
+    while True:
+        pre = labels.get(group_course(default)) if default else None
+        c_pick = gui_choose("Оберіть свій курс:", [labels[c] for c in courses], pre)
+        if not c_pick:
+            return None
+        course = next(c for c in courses if labels[c] == c_pick)
+        items = sorted(by_course[course])
+        title = f"{course} курс: оберіть свою групу" if course else "Оберіть свою групу"
+        g_pick = gui_choose(title, items, default if default in items else None)
+        if g_pick:
+            return g_pick
+        # «Скасувати» на екрані груп = повернутись до вибору курсу
 
 
 mac_choose = gui_choose  # сохранено для обратной совместимости имени
@@ -760,7 +810,7 @@ async def setup():
                     print(f"  {day} №{pair}: {o.lstrip('?')}")
     else:
         groups = list(sched["groups"].keys())
-        group = await asyncio.to_thread(gui_choose, "Виберіть свою групу:", groups)
+        group = await asyncio.to_thread(choose_group, groups)
         if not group:
             sys.exit("Группа не выбрана.")
         state["mode"] = "student"
