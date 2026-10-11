@@ -579,6 +579,65 @@ async def attend(ctx, name, course_url, end_time):
 
 
 # ---------- настройка ----------
+def build_options(my_sched, is_teacher):
+    """Список (рядок_пари, група_або_None) для всіх унікальних пар розкладу."""
+    options = []
+    for day, periods in my_sched.items():
+        for opts in periods.values():
+            for o in opts:
+                o = o.lstrip("?").strip()
+                if not o:
+                    continue
+                if is_teacher:
+                    group_part, _, rest = o.partition(":")
+                    key = (o, group_part.strip())
+                else:
+                    key = (o, None)
+                if key not in options:
+                    options.append(key)
+    return options
+
+
+async def map_options(state, my_sched, is_teacher, only_missing):
+    """Зіставляє пари розкладу з курсами Classroom. При only_missing=True обробляє лише
+    ті пари, для яких ще немає збереженого курсу (потрібно після оновлення розкладу)."""
+    state.setdefault("map", {})
+    state.setdefault("unmatched", [])
+    options = build_options(my_sched, is_teacher)
+    if only_missing:
+        options = [(o, g) for o, g in options
+                   if o not in state["map"] and o not in state["unmatched"]]
+        if not options:
+            return
+    notify("Шукаю курси в Classroom… відкриється Chrome.")
+    async with async_playwright() as p:
+        ctx = await launch(p)
+        courses = await scrape_courses(ctx, strip_group_prefix=not is_teacher)
+        await ctx.close()
+    print(f"\nНайдено курсов в Classroom: {len(courses)}")
+
+    for o, grp in options:
+        # для преподавателя сначала сужаем список курсов до нужной группы
+        pool = filter_by_group(courses, grp) if grp else courses
+        ranked = [(s, c) for s, c in rank(o, pool) if s >= 0.35][:5]
+        if not ranked:
+            print(f"\n«{o}»: похожих курсов не найдено, пропускаю.")
+            if o not in state["unmatched"]:
+                state["unmatched"].append(o)
+            continue
+        top = ranked[0][0]
+        if top >= 0.85 and (len(ranked) == 1 or ranked[1][0] <= top - 0.15):
+            state["map"][o] = ranked[0][1]["url"]
+            print(f"✓ {o}  →  {ranked[0][1]['title']}")
+            continue
+        labels = [f"{c['title']}  ({int(s * 100)}%)" for s, c in ranked]
+        picked = await asyncio.to_thread(gui_choose, f"Куди заходити на «{o}»?", labels)
+        if picked:
+            i = labels.index(picked)
+            state["map"][o] = ranked[i][1]["url"]
+    save_json(STATE_FILE, state)
+
+
 async def setup():
     sched = load_json(SCHEDULE_FILE, None)
     if not sched:
@@ -621,46 +680,7 @@ async def setup():
         state["group"] = group
         my_sched = sched["groups"][group]
 
-    options = []  # (option_label, group_or_None)
-    for day, periods in my_sched.items():
-        for opts in periods.values():
-            for o in opts:
-                o = o.lstrip("?").strip()
-                if not o:
-                    continue
-                if is_teacher:
-                    group_part, _, rest = o.partition(":")
-                    key = (o, group_part.strip())
-                else:
-                    key = (o, None)
-                if key not in options:
-                    options.append(key)
-
-    notify("Шукаю курси в Classroom… відкриється Chrome.")
-    async with async_playwright() as p:
-        ctx = await launch(p)
-        courses = await scrape_courses(ctx, strip_group_prefix=not is_teacher)
-        await ctx.close()
-    print(f"\nНайдено курсов в Classroom: {len(courses)}")
-
-    for o, grp in options:
-        # для преподавателя сначала сужаем список курсов до нужной группы
-        pool = filter_by_group(courses, grp) if grp else courses
-        ranked = [(s, c) for s, c in rank(o, pool) if s >= 0.35][:5]
-        if not ranked:
-            print(f"\n«{o}»: похожих курсов не найдено, пропускаю.")
-            continue
-        top = ranked[0][0]
-        if top >= 0.85 and (len(ranked) == 1 or ranked[1][0] <= top - 0.15):
-            state["map"][o] = ranked[0][1]["url"]
-            print(f"✓ {o}  →  {ranked[0][1]['title']}")
-            continue
-        labels = [f"{c['title']}  ({int(s * 100)}%)" for s, c in ranked]
-        picked = await asyncio.to_thread(gui_choose, f"Куди заходити на «{o}»?", labels)
-        if picked:
-            i = labels.index(picked)
-            state["map"][o] = ranked[i][1]["url"]
-    save_json(STATE_FILE, state)
+    await map_options(state, my_sched, is_teacher, only_missing=False)
     if (IS_MAC or IS_WINDOWS) and not autostart_enabled():
         ans = await asyncio.to_thread(
             gui_choose,
@@ -1042,6 +1062,15 @@ async def main():
         await setup()  # первый запуск — диалоги настройки, без консоли
     else:
         await offer_autostart(state)  # для тех, у кого настройка была сделана до появления автозапуска
+        try:  # після оновлення розкладу — підтягнути курси лише для нових пар
+            sched = load_json(SCHEDULE_FILE, None)
+            if sched:
+                await map_options(state, get_my_sched(state, sched), state["mode"] == "teacher",
+                                  only_missing=True)
+        except SystemExit:
+            raise
+        except Exception as e:
+            print("Не вдалося оновити зіставлення курсів:", e)
     await run()
 
 
