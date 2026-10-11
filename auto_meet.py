@@ -144,25 +144,40 @@ def gui_choose(prompt, items, default=None, timeout=600):
     root.attributes("-topmost", True)
     tk.Label(root, text=prompt, wraplength=420, justify="left", padx=14, pady=10,
              font=("Segoe UI", 11)).pack(anchor="w")
+    shown = list(items)
+    search = tk.StringVar()
+    if len(items) > 10:  # довгий список — поле швидкого пошуку
+        ent = tk.Entry(root, textvariable=search, font=("Segoe UI", 12))
+        ent.pack(padx=14, fill="x")
+        tk.Label(root, text="Почніть вводити для пошуку", fg="#888").pack(anchor="w", padx=14)
     frame = tk.Frame(root)
     frame.pack(padx=14, pady=4, fill="both", expand=True)
     scroll = tk.Scrollbar(frame)
-    listbox = tk.Listbox(frame, height=min(max(len(items), 3), 14), width=48,
+    listbox = tk.Listbox(frame, height=min(max(len(items), 3), 14), width=52,
                          font=("Segoe UI", 12), activestyle="dotbox",
                          exportselection=False, yscrollcommand=scroll.set)
     scroll.config(command=listbox.yview)
-    for i, item in enumerate(items):
-        listbox.insert(tk.END, item)
-    start = items.index(default) if default in items else 0
-    listbox.selection_set(start)
-    listbox.see(start)
     listbox.pack(side="left", fill="both", expand=True)
     if len(items) > 14:
         scroll.pack(side="right", fill="y")
 
+    def refill(*_):
+        q = search.get().strip().lower()
+        shown[:] = [i for i in items if q in i.lower()] if q else list(items)
+        listbox.delete(0, tk.END)
+        for i in shown:
+            listbox.insert(tk.END, i)
+        if shown:
+            idx = shown.index(default) if (default in shown and not q) else 0
+            listbox.selection_set(idx)
+            listbox.see(idx)
+
+    refill()
+    search.trace_add("write", refill)
+
     def confirm(event=None):
         sel = listbox.curselection()
-        result["value"] = items[sel[0]] if sel else default
+        result["value"] = shown[sel[0]] if sel else None
         root.destroy()
 
     def cancel(event=None):
@@ -178,10 +193,30 @@ def gui_choose(prompt, items, default=None, timeout=600):
     root.update_idletasks()
     w, h = root.winfo_reqwidth(), root.winfo_reqheight()
     root.geometry(f"+{(root.winfo_screenwidth() - w) // 2}+{max((root.winfo_screenheight() - h) // 3, 0)}")
-    listbox.focus_set()
+    (ent if len(items) > 10 else listbox).focus_set()
     root.after(int(timeout * 1000), root.destroy)  # автозакрытие по таймауту
     root.mainloop()
     return result["value"]
+
+
+def gui_info(text, title="Auto Meet"):
+    """Інформаційне вікно з кнопкою OK."""
+    if IS_MAC:
+        esc = lambda x: x.replace("\\", "\\\\").replace('"', '\\"')
+        subprocess.run(["osascript", "-e",
+                        f'display dialog "{esc(text)}" with title "{esc(title)}" buttons {{"OK"}} default button "OK"'],
+                       capture_output=True, text=True)
+        return
+    try:
+        import tkinter as tk
+        from tkinter import messagebox
+        root = tk.Tk()
+        root.withdraw()
+        root.attributes("-topmost", True)
+        messagebox.showinfo(title, text, parent=root)
+        root.destroy()
+    except Exception:
+        print(text)
 
 
 def group_course(name):
@@ -557,42 +592,59 @@ def effective_day(d):
     return None
 
 
+SUBS = []  # разові заміни викладача: [{"start": dt, "end": dt, "pair": "3", "label": "..."}]
+
+
+def pair_times(sched, pair, day_dt):
+    """(початок, кінець) пари pair у день day_dt."""
+    h, m = map(int, sched["bells"][pair].split(":"))
+    start = day_dt.replace(hour=h, minute=m, second=0, microsecond=0)
+    fixed_end = sched.get("ends", {}).get(pair)
+    if fixed_end:
+        eh, em = map(int, fixed_end.split(":"))
+        return start, start.replace(hour=eh, minute=em)
+    return start, start + timedelta(minutes=DURATION_MIN)
+
+
+def day_pairs(sched, my_sched, day_dt):
+    """Пари дня за розкладом (разом із разовими замінами): [(pair, start, end, label)]."""
+    items = []
+    day = effective_day(day_dt.date())
+    for pair in sorted(my_sched.get(day, {}).keys(), key=int):
+        opts = my_sched[day][pair]
+        label = " / ".join(o.lstrip("?").strip() for o in opts if o.lstrip("?").strip())
+        if not label:
+            continue
+        start, end = pair_times(sched, pair, day_dt)
+        items.append((pair, start, end, label))
+    for sb in SUBS:
+        if sb["start"].date() == day_dt.date():
+            items.append((sb["pair"], sb["start"], sb["end"], "Заміна · " + sb["label"]))
+    items.sort(key=lambda x: x[1])
+    return items
+
+
 def compute_status(sched, my_sched, now):
     """Находит ближайшее по времени событие: либо «до начала следующей пары»,
     либо, если пара уже идёт, «до её конца». Смотрит на неделю вперёд, если
-    сегодня пар больше не осталось."""
-    bells = sched["bells"]
-    ends = sched.get("ends", {})
+    сегодня пар больше не осталось. Додає підказки для панелі: наступна пара,
+    скільки пар лишилось сьогодні."""
     for offset in range(0, 8):
         day_dt = (now + timedelta(days=offset)).replace(hour=0, minute=0, second=0, microsecond=0)
-        day = effective_day(day_dt.date())
-        periods = my_sched.get(day, {})
-        for pair in sorted(periods.keys(), key=int):
-            opts = periods[pair]
-            if not opts:
-                continue
-            h, m = map(int, bells[pair].split(":"))
-            start = day_dt.replace(hour=h, minute=m)
-            label = " / ".join(o.lstrip("?").strip() for o in opts if o.lstrip("?").strip())
-            if not label:
-                continue
-            if offset == 0:
-                fixed_end = ends.get(pair)
-                if fixed_end:
-                    eh, em = map(int, fixed_end.split(":"))
-                    end = start.replace(hour=eh, minute=em)
-                else:
-                    end = start + timedelta(minutes=DURATION_MIN)
-                if now < start:
-                    return {"phase": "before", "target": start.timestamp() * 1000,
-                            "pair": pair, "label": label}
-                if now < end:
-                    return {"phase": "during", "target": end.timestamp() * 1000,
-                            "pair": pair, "label": label}
+        items = day_pairs(sched, my_sched, day_dt)
+        for idx, (pair, start, end, label) in enumerate(items):
+            if offset == 0 and now >= end:
                 continue  # эта пара уже закончилась — смотрим дальше
-            else:
-                return {"phase": "before", "target": start.timestamp() * 1000,
-                        "pair": pair, "label": label}
+            phase = "during" if (offset == 0 and now >= start) else "before"
+            nxt = items[idx + 1] if idx + 1 < len(items) else None
+            left = len([x for x in items if x[2] > now]) if offset == 0 else len(items)
+            return {"phase": phase,
+                    "target": (end if phase == "during" else start).timestamp() * 1000,
+                    "pair": pair, "label": label,
+                    "start_hm": f"{start:%H:%M}", "end_hm": f"{end:%H:%M}",
+                    "day_offset": offset, "day_date": f"{start:%d.%m}",
+                    "left_today": left if offset == 0 else 0,
+                    "next": (f"№{nxt[0]} о {nxt[1]:%H:%M} — {nxt[3]}" if nxt else "")}
     return {"phase": "none", "target": None, "pair": None, "label": ""}
 
 
@@ -601,6 +653,7 @@ async def push_dashboard(dashboard_page, sched, my_sched, identity):
         return
     status = compute_status(sched, my_sched, datetime.now())
     status["identity"] = identity
+    status["can_substitute"] = bool(STATE_REF.get("mode") == "teacher")
     try:
         await dashboard_page.evaluate("data => window.updateDashboard && window.updateDashboard(data)",
                                        status)
@@ -753,10 +806,11 @@ async def map_options(state, my_sched, is_teacher, only_missing):
         await ctx.close()
     print(f"\nНайдено курсов в Classroom: {len(courses)}")
 
+    todo = []  # пари, де потрібне рішення людини
     for o, grp in options:
         # для преподавателя сначала сужаем список курсов до нужной группы
         pool = filter_by_group(courses, grp) if grp else courses
-        ranked = [(s, c) for s, c in rank(o, pool) if s >= 0.35][:5]
+        ranked = [(sc, c) for sc, c in rank(o, pool) if sc >= 0.35][:5]
         if not ranked:
             print(f"\n«{o}»: похожих курсов не найдено, пропускаю.")
             if o not in state["unmatched"]:
@@ -767,11 +821,18 @@ async def map_options(state, my_sched, is_teacher, only_missing):
             state["map"][o] = ranked[0][1]["url"]
             print(f"✓ {o}  →  {ranked[0][1]['title']}")
             continue
-        labels = [f"{c['title']}  ({int(s * 100)}%)" for s, c in ranked]
-        picked = await asyncio.to_thread(gui_choose, f"Куди заходити на «{o}»?", labels)
-        if picked:
-            i = labels.index(picked)
-            state["map"][o] = ranked[i][1]["url"]
+        todo.append((o, ranked))
+    if todo:
+        notify(f"Потрібно уточнити курсів: {len(todo)}. Відкриються короткі запитання.")
+    skip_label = "— Пропустити цю пару —"
+    for n, (o, ranked) in enumerate(todo, 1):
+        labels = [f"{c['title']}  ({int(sc * 100)}%)" for sc, c in ranked] + [skip_label]
+        picked = await asyncio.to_thread(
+            gui_choose, f"({n} з {len(todo)}) Куди заходити на «{o}»?", labels)
+        if picked and picked != skip_label:
+            state["map"][o] = ranked[labels.index(picked)][1]["url"]
+        elif picked == skip_label and o not in state["unmatched"]:
+            state["unmatched"].append(o)
     save_json(STATE_FILE, state)
 
 
@@ -826,8 +887,100 @@ async def setup():
             ["Так, запитувати", "Ні"], "Так, запитувати")
         if ans == "Так, запитувати" and enable_autostart():
             notify("Автозапуск увімкнено.")
-    notify("Налаштування завершено. Програма починає стежити за розкладом.")
+    STATE_REF.update(state)
+    gui_info(setup_summary(state, sched, my_sched, is_teacher))
     print("\nГотово.")
+
+
+# ---------- заміна пари (для викладача) ----------
+SUB_BUSY = False
+_COURSES_CACHE = {"t": None, "courses": []}
+
+
+async def substitute_flow(ctx, state, sched):
+    """Кнопка «Заміняю пару»: обираєте групу, номер пари і курс у Classroom —
+    програма зайде на цю пару в потрібний час і вийде по її закінченню."""
+    global SUB_BUSY
+    SUB_BUSY = True
+    try:
+        group = await asyncio.to_thread(choose_group, list(sched["groups"].keys()))
+        if not group:
+            return
+        now = datetime.now()
+        day_dt = now.replace(hour=0, minute=0, second=0, microsecond=0)
+        pairs = []
+        for pair in sorted(sched["bells"].keys(), key=int):
+            start, end = pair_times(sched, pair, day_dt)
+            if end > now:
+                pairs.append((f"{pair} пара — {start:%H:%M}–{end:%H:%M}", pair, start, end))
+        if not pairs:
+            gui_info("Сьогодні пари вже закінчились.")
+            return
+        labels = [x[0] for x in pairs]
+        pick = await asyncio.to_thread(
+            gui_choose, f"{group}: яку пару ви заміняєте?", labels, labels[0])
+        if not pick:
+            return
+        _, pair, start, end = pairs[labels.index(pick)]
+
+        fresh = _COURSES_CACHE["t"] and (now - _COURSES_CACHE["t"]) < timedelta(minutes=30)
+        if not fresh:
+            notify("Шукаю курси в Classroom…")
+            try:
+                _COURSES_CACHE["courses"] = await scrape_courses(ctx, strip_group_prefix=False)
+                _COURSES_CACHE["t"] = datetime.now()
+            except BaseException as e:  # SystemExit теж
+                notify("Не вдалося прочитати курси Classroom.")
+                print("Заміна: помилка читання курсів:", e)
+                return
+        pool = filter_by_group(_COURSES_CACHE["courses"], group)
+        titles = []
+        for c in sorted(pool, key=lambda c: c["title"].lower()):
+            t = c["title"]
+            if t in [x[0] for x in titles]:
+                t = f"{t}  ({c['url'][-6:]})"
+            titles.append((t, c))
+        sel = await asyncio.to_thread(
+            gui_choose, f"{group}, {pair} пара ({start:%H:%M}). Який курс?", [t for t, _ in titles])
+        if not sel:
+            return
+        course = dict(titles)[sel]
+        label = f"{group}: {course['title']}"
+        entry = {"start": start, "end": end, "pair": pair, "label": label}
+        SUBS.append(entry)
+        notify(f"Заміна: зайду на «{label}» о {start:%H:%M}.")
+
+        async def _go():
+            await asyncio.sleep(max(0, (start - timedelta(minutes=JOIN_BEFORE_MIN) - datetime.now()).total_seconds()))
+            await attend(ctx, label, course["url"], end)
+        asyncio.create_task(_go())
+    finally:
+        SUB_BUSY = False
+
+
+def setup_summary(state, sched, my_sched, is_teacher):
+    who = f"викладач {state.get('surname')}" if is_teacher else f"група {state.get('group')}"
+    lines = [f"Готово! Профіль: {who}."]
+    try:
+        st = compute_status(sched, my_sched, datetime.now())
+        if st.get("target"):
+            when = "сьогодні" if st["day_offset"] == 0 else (
+                "завтра" if st["day_offset"] == 1 else st["day_date"])
+            lines.append(f"Найближча пара: №{st['pair']} о {st['start_hm']} ({when}) — {st['label']}.")
+            if st["day_offset"] == 0:
+                lines.append(f"Пар сьогодні лишилось: {st['left_today']}.")
+        else:
+            lines.append("Найближчим часом пар немає.")
+    except Exception:
+        pass
+    lines.append("Автозапуск: " + ("увімкнено" if autostart_enabled() else "вимкнено") + ".")
+    miss = len(state.get("unmatched", []))
+    if miss:
+        lines.append(f"Пар без прив'язки до курсу Classroom: {miss} (на них програма не заходитиме).")
+    if is_teacher:
+        lines.append("Заміняєте чужу пару? Натисніть кнопку «Заміняю пару» на панелі з таймером.")
+    lines.append("Панель з таймером відкриється в браузері. Не закривайте програму.")
+    return "\n".join(lines)
 
 
 # ---------- ежедневная работа ----------
@@ -1136,6 +1289,10 @@ async def run():
         ctx = await launch(p)
         dashboard_page = ctx.pages[0] if ctx.pages else await ctx.new_page()
         try:
+            async def _dash_cmd(cmd=None):
+                if cmd == "substitute" and not SUB_BUSY:
+                    asyncio.create_task(substitute_flow(ctx, state, sched))
+            await dashboard_page.expose_function("pyCommand", _dash_cmd)
             await dashboard_page.goto(DASHBOARD_FILE.as_uri())
         except Exception:
             dashboard_page = None  # без панели скрипт всё равно продолжит работать

@@ -58,6 +58,17 @@
   .dot.during { background: #ff9f43; box-shadow: 0 0 10px #ff9f43; }
   .dot.none { background: #56607a; box-shadow: none; }
   .updated { margin-top: 30px; font-size: 12px; color: #4d5875; }
+  .label { font-size: 34px; line-height: 1.2; }
+  .next { margin-top: 18px; font-size: 16px; color: #9fb0e0; }
+  .left { margin-top: 4px; font-size: 14px; color: #6f7ca3; }
+  .btn {
+    margin-top: 26px; padding: 12px 26px; font-size: 16px; font-weight: 600;
+    color: #eef1f8; background: #2a3a66; border: 1px solid #3f56a0;
+    border-radius: 10px; cursor: pointer; display: none;
+  }
+  .btn:hover { background: #3550a0; }
+  .hint { margin-top: 8px; font-size: 12px; color: #4d5875; display: none; }
+  .during .timer { background: linear-gradient(180deg, #ffd9a8, #ff9f43); -webkit-background-clip: text; background-clip: text; }
 </style>
 </head>
 <body>
@@ -67,6 +78,10 @@
     <div class="timer" id="timer">--:--:--</div>
     <div class="label" id="label"></div>
     <div class="sub" id="sub"></div>
+    <div class="next" id="next"></div>
+    <div class="left" id="left"></div>
+    <button class="btn" id="subBtn" onclick="window.pyCommand && window.pyCommand('substitute')">Заміняю пару</button>
+    <div class="hint" id="subHint">Для заміни іншого викладача: оберіть групу, пару і курс</div>
     <div class="updated" id="updated"></div>
   </div>
 
@@ -83,7 +98,14 @@ function fmt(ms) {
   return `${h}:${m}:${s}`;
 }
 
+function showBtn() {
+  const on = !!state.can_substitute && !!window.pyCommand;
+  document.getElementById("subBtn").style.display = on ? "inline-block" : "none";
+  document.getElementById("subHint").style.display = on ? "block" : "none";
+}
+
 function render() {
+  document.body.className = state.phase === "during" ? "during" : "";
   document.getElementById("identity").textContent = state.identity || "Auto Meet";
   const dot = document.getElementById("dot");
   const phaseText = document.getElementById("phaseText");
@@ -98,13 +120,21 @@ function render() {
     timer.textContent = "--:--:--";
     label.textContent = "";
     sub.textContent = "";
+    document.getElementById("next").textContent = "";
+    document.getElementById("left").textContent = "";
+    showBtn();
     return;
   }
 
   const diff = state.target - Date.now();
   timer.textContent = fmt(diff);
   label.textContent = state.label || "";
-  sub.textContent = state.pair ? `Пара №${state.pair}` : "";
+  const when = !state.day_offset ? "" : (state.day_offset === 1 ? "завтра, " : state.day_date + ", ");
+  sub.textContent = state.pair
+    ? `Пара №${state.pair} · ${when}${state.start_hm || ""}–${state.end_hm || ""}` : "";
+  document.getElementById("next").textContent = state.next ? "Далі: " + state.next : "";
+  document.getElementById("left").textContent =
+    state.left_today ? `Пар сьогодні лишилось: ${state.left_today}` : "";
 
   if (state.phase === "during") {
     phaseText.textContent = "Йде пара · до завершення";
@@ -115,6 +145,7 @@ function render() {
   if (diff <= 0 && state.phase === "before") {
     phaseText.textContent = "Заходимо…";
   }
+  showBtn();
 }
 
 window.updateDashboard = function(payload) {
