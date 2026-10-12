@@ -5,6 +5,8 @@ const fs = require('fs');
 const L = require('./logic');
 const { Store } = require('./store');
 const { Engine, cleanError } = require('./engine');
+const { checkAppUpdate } = require('./updater');
+const cfg = require('./config');
 
 app.setName('AutoMeet Beta');
 if (process.env.AUTOMEET_DATA_DIR) app.setPath('userData', process.env.AUTOMEET_DATA_DIR);
@@ -190,6 +192,7 @@ async function runSettings() {
         { value: 'autostart', label: on ? 'Вимкнути автозапуск' : 'Увімкнути автозапуск' },
         { value: 'map', label: 'Прив\'язати курси Classroom ще раз' },
         { value: 'update', label: 'Перевірити оновлення розкладу' },
+        { value: 'appupdate', label: 'Перевірити оновлення програми' },
         { value: 'log', label: 'Відкрити журнал' },
         { value: 'reset', label: 'Змінити профіль (скинути налаштування)' },
       ], timeoutMs: 0,
@@ -206,6 +209,9 @@ async function runSettings() {
       setBusy(null);
       if (changed) { engine.loadProfile(); engine.mapOptions(true).catch(() => {}); }
       await ask({ kind: 'info', title: 'Розклад', text: changed ? 'Розклад оновлено.' : 'У вас актуальна версія розкладу.' });
+    } else if (r.value === 'appupdate') {
+      setBusy('Перевіряю нову версію…');
+      try { await checkApp(true); } finally { setBusy(null); }
     } else if (r.value === 'log') {
       shell.openPath(store.logFile);
     } else if (r.value === 'reset') {
@@ -218,6 +224,42 @@ async function runSettings() {
       }
     }
   }
+}
+
+// ---------- оновлення самої програми ----------
+let appCheckRunning = false;
+async function checkApp(manual) {
+  if (appCheckRunning) return;
+  appCheckRunning = true;
+  try {
+    const u = await checkAppUpdate(VERSION);
+    store.state.lastAppCheck = Date.now();
+    store.save();
+    if (!u) {
+      if (manual) await ask({ kind: 'info', title: 'Оновлення програми', text: `У вас остання версія (${VERSION}).` });
+      return;
+    }
+    if (!manual && store.state.skipVersion === u.version) return;
+    const text = `Доступна версія ${u.version} (у вас ${VERSION}).` + (u.notes ? `\n\n${u.notes}` : '') +
+      '\n\nПісля завантаження вийдіть із програми (іконка в треї → Вийти) і запустіть інсталятор.';
+    const r = await ask({
+      kind: 'choose', title: 'Нова версія Auto Meet', text,
+      items: [{ value: 'get', label: u.direct ? 'Завантажити' : 'Відкрити сторінку завантаження' },
+        { value: 'later', label: 'Нагадати пізніше' }, { value: 'skip', label: 'Пропустити цю версію' }],
+      default: 'get', timeoutMs: manual ? 0 : 3 * 60 * 1000,
+    });
+    if (!r) return;
+    if (r.value === 'get') shell.openExternal(u.url);
+    else if (r.value === 'skip') { store.state.skipVersion = u.version; store.save(); }
+  } catch (e) {
+    store.log('Перевірка оновлення програми: ' + e.message);
+    if (manual) await ask({ kind: 'info', title: 'Оновлення програми', text: 'Не вдалося перевірити оновлення. Перевірте інтернет.\n\nСторінка завантаження: ' + cfg.RELEASES_PAGE });
+  } finally { appCheckRunning = false; }
+}
+function scheduleAppChecks() {
+  const due = () => store.state.mode && Date.now() - (store.state.lastAppCheck || 0) > cfg.APP_CHECK_MS;
+  setTimeout(() => { if (due()) checkApp(false); }, 20 * 1000);
+  setInterval(() => { if (due()) checkApp(false); }, 30 * 60 * 1000);
 }
 
 function begin() {
@@ -294,6 +336,7 @@ app.whenReady().then(async () => {
     store.updateSchedule().then((changed) => {
       if (changed && store.state.mode) { engine.loadProfile(); engine.mapOptions(true).catch(() => {}); }
     });
+    scheduleAppChecks();
     if (store.state.mode) begin();
     else { showWindow(); await runSetup(); }
   });

@@ -9,7 +9,7 @@
   "private": true,
   "scripts": {
     "start": "electron .",
-    "test": "node --test test/logic.test.js",
+    "test": "node --test test/logic.test.js test/updater.test.js",
     "dist": "electron-builder"
   },
   "dependencies": {
@@ -60,7 +60,8 @@
       "entitlements": "build/entitlements.mac.plist",
       "entitlementsInherit": "build/entitlements.mac.plist",
       "icon": "build/icon.png",
-      "notarize": true
+      "notarize": true,
+      "artifactName": "AutoMeet-${version}-mac-${arch}.${ext}"
     },
     "win": {
       "target": [
@@ -76,7 +77,8 @@
     "nsis": {
       "oneClick": true,
       "perMachine": false,
-      "deleteAppDataOnUninstall": false
+      "deleteAppDataOnUninstall": false,
+      "artifactName": "AutoMeet-${version}-Setup.${ext}"
     },
     "publish": null
   }
