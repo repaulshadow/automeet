@@ -456,11 +456,40 @@ async def launch(p):
     return ctx
 
 
+async def _wait_courses_page(ctx, own, timeout_s=300):
+    """Чекає, поки в БУДЬ-ЯКІЙ вкладці з'являться курси Classroom: при першому вході Google
+    відкриває логін у новій вкладці, а власна вкладка лишається на рекламній сторінці."""
+    t0 = asyncio.get_event_loop().time()
+    redirected = False
+    while asyncio.get_event_loop().time() - t0 < timeout_s:
+        for pg in list(ctx.pages):
+            try:
+                if not pg.url.startswith("https://classroom.google.com/"):
+                    continue
+                if await pg.evaluate("document.querySelectorAll('a[href*=\"/c/\"]').length") > 0:
+                    return pg
+            except Exception:
+                continue
+        if not redirected and asyncio.get_event_loop().time() - t0 > 6:
+            try:
+                if not re.search(r"classroom\.google\.com|accounts\.google\.com", own.url):
+                    redirected = True
+                    asyncio.ensure_future(own.goto(
+                        "https://accounts.google.com/ServiceLogin?continue=https%3A%2F%2Fclassroom.google.com%2F"))
+            except Exception:
+                pass
+        await asyncio.sleep(1)
+    raise RuntimeError("Не дочекався входу в Classroom (5 хвилин)")
+
+
 async def scrape_courses(ctx, strip_group_prefix=True):
-    page = await ctx.new_page()
-    await page.goto("https://classroom.google.com/u/0/h")
-    print("Если попросит — войди в Google-аккаунт в открывшемся окне (жду до 3 минут)…")
-    await page.wait_for_selector('a[href*="/c/"]', timeout=180000)
+    own = await ctx.new_page()
+    try:
+        await own.goto("https://classroom.google.com/u/0/h")
+    except Exception:
+        pass
+    print("Если попросит — войди в Google-аккаунт в открывшемся окне (жду до 5 минут)…")
+    page = await _wait_courses_page(ctx, own)
     await page.wait_for_timeout(2500)
     raw = await page.evaluate("""() => {
         const m = {};
@@ -470,7 +499,11 @@ async def scrape_courses(ctx, strip_group_prefix=True):
         });
         return m;
     }""")
-    await page.close()
+    for pg in {page, own}:
+        try:
+            await pg.close()
+        except Exception:
+            pass
     courses = []
     for url, text in raw.items():
         if not re.search(r"/c/[^/]+/?$", url):
