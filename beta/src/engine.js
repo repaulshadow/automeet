@@ -210,12 +210,45 @@ class Engine extends EventEmitter {
   }
 
   // ---------- Classroom ----------
+  /** Чекає, поки в БУДЬ-ЯКІЙ вкладці браузера з'явиться список курсів Classroom.
+   *  Після входу в Google сайт відкриває логін в окремій новій вкладці, тож стежити лише
+   *  за «своєю» вкладкою не можна. */
+  async waitForCoursesPage(ctx, ownPage, timeoutMs) {
+    const t0 = Date.now();
+    let redirected = false;
+    while (Date.now() - t0 < timeoutMs) {
+      for (const pg of ctx.pages()) {
+        let url = '';
+        try { url = pg.url(); } catch { continue; }
+        if (!/^https:\/\/classroom\.google\.com\//.test(url)) continue;
+        try {
+          const n = await pg.evaluate(() => document.querySelectorAll('a[href*="/c/"]').length);
+          if (n > 0) return pg;
+        } catch { /* сторінка ще вантажиться */ }
+      }
+      // Нова (не авторизована) вкладка часто потрапляє на рекламну сторінку Google for Education —
+      // тоді відразу ведемо її на форму входу, щоб людина входила прямо тут.
+      if (!redirected && Date.now() - t0 > 6000) {
+        let u = '';
+        try { u = ownPage.url(); } catch { /* закрита */ }
+        if (u && !/classroom\.google\.com|accounts\.google\.com/.test(u)) {
+          redirected = true;
+          ownPage.goto('https://accounts.google.com/ServiceLogin?continue=https%3A%2F%2Fclassroom.google.com%2F')
+            .catch(() => {});
+        }
+      }
+      await sleep(1000);
+    }
+    throw new Error('Не дочекався входу в Classroom (5 хвилин). Увійдіть у Google у вікні браузера і повторіть: Налаштування → Прив\'язати курси.');
+  }
+
   async scrapeCourses(ctx, stripGroupPrefix) {
-    const page = await ctx.newPage();
+    const own = await ctx.newPage();
+    let page = own;
     try {
-      await page.goto('https://classroom.google.com/u/0/h');
-      this.log('Якщо попросить — увійдіть у Google-акаунт у вікні браузера (чекаю до 3 хвилин)…');
-      await page.waitForSelector('a[href*="/c/"]', { timeout: 180000 });
+      await own.goto('https://classroom.google.com/u/0/h').catch(() => {});
+      this.log('Якщо попросить — увійдіть у Google-акаунт у вікні браузера (чекаю до 5 хвилин)…');
+      page = await this.waitForCoursesPage(ctx, own, 5 * 60 * 1000);
       await page.waitForTimeout(2500);
       const raw = await page.evaluate(() => {
         const m = {};
@@ -241,7 +274,7 @@ class Engine extends EventEmitter {
       }
       return courses;
     } finally {
-      try { await page.close(); } catch { /* ok */ }
+      for (const pg of new Set([page, own])) { try { await pg.close(); } catch { /* ok */ } }
     }
   }
 
@@ -512,4 +545,10 @@ class Engine extends EventEmitter {
   }
 }
 
-module.exports = { Engine };
+/** Текст помилки без службових кодів кольору Playwright та зайвих рядків. */
+function cleanError(e) {
+  return String((e && e.message) || e).replace(/\u001b\[[0-9;]*m/g, '').replace(/\[\d+m/g, '')
+    .split('\n').map((x) => x.trim()).filter(Boolean)[0] || 'Невідома помилка';
+}
+
+module.exports = { Engine, cleanError };

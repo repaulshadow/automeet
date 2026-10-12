@@ -4,7 +4,7 @@ const path = require('path');
 const fs = require('fs');
 const L = require('./logic');
 const { Store } = require('./store');
-const { Engine } = require('./engine');
+const { Engine, cleanError } = require('./engine');
 
 app.setName('AutoMeet Beta');
 if (process.env.AUTOMEET_DATA_DIR) app.setPath('userData', process.env.AUTOMEET_DATA_DIR);
@@ -131,7 +131,7 @@ async function runSetup() {
   } catch (e) {
     setBusy(null);
     store.log('Налаштування: ' + e.message);
-    await ask({ kind: 'info', title: 'Не вдалося зв\'язати курси', text: String(e.message) + '\n\nМожна повторити: Налаштування → Прив\'язати курси.' });
+    await ask({ kind: 'info', title: 'Не вдалося зв\'язати курси', text: cleanError(e) + '\n\nМожна повторити: Налаштування → Прив\'язати курси.' });
   }
   setBusy(null);
   if (!autostartEnabled()) {
@@ -168,7 +168,7 @@ async function runSubstitute() {
     courses = await engine.substituteCourses(g.value);
   } catch (e) {
     setBusy(null);
-    await ask({ kind: 'info', title: 'Помилка', text: 'Не вдалося прочитати курси Classroom: ' + e.message });
+    await ask({ kind: 'info', title: 'Помилка', text: 'Не вдалося прочитати курси Classroom: ' + cleanError(e) });
     return;
   }
   setBusy(null);
@@ -198,7 +198,7 @@ async function runSettings() {
     if (r.value === 'autostart') { setAutostart(!on); }
     else if (r.value === 'map') {
       try { setBusy('Читаю курси Classroom…'); store.state.unmatched = []; await engine.mapOptions(false); }
-      catch (e) { await ask({ kind: 'info', title: 'Помилка', text: e.message }); }
+      catch (e) { await ask({ kind: 'info', title: 'Помилка', text: cleanError(e) }); }
       setBusy(null);
     } else if (r.value === 'update') {
       setBusy('Перевіряю оновлення…');
