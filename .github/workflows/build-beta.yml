@@ -45,6 +45,8 @@ jobs:
           set +e
           if [ -z "$CSC_LINK" ]; then
             echo "Сертифіката Apple немає — збираю БЕЗ підпису (macOS покаже попередження)."
+            # порожня змінна CSC_LINK ламає electron-builder («not a file») — прибираємо її
+            unset CSC_LINK CSC_KEY_PASSWORD
             export CSC_IDENTITY_AUTO_DISCOVERY=false
             ARGS="--mac --config.mac.notarize=false"
           elif [ -z "$APPLE_ID" ]; then
