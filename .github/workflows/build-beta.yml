@@ -1,0 +1,76 @@
+name: build-beta
+
+# Бета-версія (Electron). Працює ТІЛЬКИ для гілки beta і папки beta/ —
+# основну версію (auto_meet.py, build-exe.yml, автооновлення з main) не чіпає.
+# Запуск: автоматично при push у гілку beta, або вручну: Actions -> build-beta -> Run workflow
+# (при ручному запуску оберіть гілку beta).
+on:
+  workflow_dispatch:
+  push:
+    branches: [beta]
+    paths:
+      - "beta/**"
+      - "schedule.json"
+      - ".github/workflows/build-beta.yml"
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    defaults: { run: { working-directory: beta } }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 22, cache: npm, cache-dependency-path: beta/package-lock.json }
+      - run: npm ci
+      - run: TZ=Europe/Kyiv npm test
+
+  mac:
+    needs: test
+    runs-on: macos-latest
+    defaults: { run: { working-directory: beta } }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 22, cache: npm, cache-dependency-path: beta/package-lock.json }
+      - run: npm ci
+      - name: Build (signed + notarized if secrets are set)
+        env:
+          CSC_LINK: ${{ secrets.MAC_CERT_P12_BASE64 }}
+          CSC_KEY_PASSWORD: ${{ secrets.MAC_CERT_PASSWORD }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          if [ -z "$CSC_LINK" ]; then
+            echo "Сертифіката Apple немає — збираю БЕЗ підпису (macOS покаже попередження)."
+            export CSC_IDENTITY_AUTO_DISCOVERY=false
+            npx electron-builder --mac --config.mac.notarize=false
+          elif [ -z "$APPLE_ID" ]; then
+            echo "Підписую, але без нотаризації (немає APPLE_ID)."
+            npx electron-builder --mac --config.mac.notarize=false
+          else
+            npx electron-builder --mac
+          fi
+      - uses: actions/upload-artifact@v4
+        with:
+          name: AutoMeetBeta-macos
+          path: |
+            beta/dist/*.dmg
+            beta/dist/*-mac.zip
+
+  windows:
+    needs: test
+    runs-on: windows-latest
+    defaults: { run: { working-directory: beta } }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 22, cache: npm, cache-dependency-path: beta/package-lock.json }
+      - run: npm ci
+      - run: npx electron-builder --win
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: "false"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: AutoMeetBeta-windows
+          path: beta/dist/*.exe
