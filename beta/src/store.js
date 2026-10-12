@@ -4,7 +4,8 @@ const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 
-const UPDATE_URL = 'https://raw.githubusercontent.com/repaulshadow/automeet/main/';
+const cfg = require('./config');
+const UPDATE_URL = cfg.RAW_BASE;
 const UPDATE_CHECK_MS = 6 * 3600 * 1000;
 
 class Store {
