@@ -7,7 +7,7 @@ name: build-beta
 on:
   workflow_dispatch:
   push:
-    branches: [beta]
+    branches: [beta, beta-ci-debug]
     paths:
       - "beta/**"
       - "schedule.json"
@@ -40,16 +40,25 @@ jobs:
           APPLE_ID: ${{ secrets.APPLE_ID }}
           APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        shell: bash
         run: |
+          set +e
           if [ -z "$CSC_LINK" ]; then
             echo "Сертифіката Apple немає — збираю БЕЗ підпису (macOS покаже попередження)."
             export CSC_IDENTITY_AUTO_DISCOVERY=false
-            npx electron-builder --mac --config.mac.notarize=false
+            ARGS="--mac --config.mac.notarize=false"
           elif [ -z "$APPLE_ID" ]; then
             echo "Підписую, але без нотаризації (немає APPLE_ID)."
-            npx electron-builder --mac --config.mac.notarize=false
+            ARGS="--mac --config.mac.notarize=false"
           else
-            npx electron-builder --mac
+            ARGS="--mac"
+          fi
+          DEBUG=electron-builder npx electron-builder $ARGS 2>&1 | tee build.log
+          code=${PIPESTATUS[0]}
+          if [ "$code" != "0" ]; then
+            # виводимо хвіст журналу як помилку (видно в анотаціях без завантаження логів)
+            tail -n 25 build.log | sed 's/%/%25/g' | while IFS= read -r line; do echo "::error::${line:0:300}"; done
+            exit $code
           fi
       - uses: actions/upload-artifact@v4
         with:
