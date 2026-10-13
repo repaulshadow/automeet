@@ -63,3 +63,44 @@ test('buildOptions', () => {
   const want = fx.opts.map(key).sort();
   assert.ok(want.every((w) => got.includes(w)));
 });
+
+test('список викладачів: варіанти одного прізвища об\'єднані, різні люди — ні', () => {
+  const dir = L.buildTeacherDirectory(sched);
+  const by = (surname) => dir.find((x) => x.surname === surname);
+  const names = dir.map((x) => x.surname);
+  // однакові люди
+  assert.deepStrictEqual(by("П'ятниченко").aliases, ['пятниченк', 'пятниченко', 'пятніченко']);
+  assert.deepStrictEqual(by('Сухих').aliases, ['сухих', 'сухіх']);
+  assert.deepStrictEqual(by('Головіна').aliases, ['голвіна', 'головіна']);
+  assert.ok(by('Лиховидова').aliases.includes('лиховидоа'));
+  // різні люди (чоловік/жінка) не зливаються
+  for (const [a, b] of [['Калугін', 'Калугіна'], ['Лиховидов', 'Лиховидова'], ['Семенов', 'Семенова']]) {
+    assert.ok(names.includes(a) && names.includes(b), `${a}/${b} мають бути окремо`);
+  }
+  // сміття відсутнє
+  for (const bad of ['***', '2', 'с.а']) assert.ok(!dir.some((x) => x.aliases.some((al) => al.includes(bad))), bad);
+  assert.ok(dir.length >= 60 && dir.length <= 70);
+});
+
+test('пари викладача знаходяться за всіма написаннями', () => {
+  const dir = L.buildTeacherDirectory(sched);
+  const t = dir.find((x) => x.surname === "П'ятниченко");
+  const all = Object.values(L.teacherSchedule(sched, t.aliases)).flatMap((d) => Object.values(d)).flat().length;
+  const one = Object.values(L.teacherSchedule(sched, "П'ятниченко")).flatMap((d) => Object.values(d)).flat().length;
+  assert.ok(all > one, `${all} має бути більше за ${one}`);
+});
+
+test('ручні налаштування teachers у schedule.json: merge / split / hide', () => {
+  const s2 = JSON.parse(JSON.stringify(sched));
+  s2.teachers = { merge: [['Терещенко', 'Трешенко']], split: [['Пятниченк', 'Пятниченко']], hide: ['Козел'] };
+  const dir = L.buildTeacherDirectory(s2);
+  assert.ok(dir.some((x) => x.aliases.includes('терещенко') && x.aliases.includes('трешенко')));
+  assert.ok(!dir.some((x) => x.surname === 'Козел'));
+  assert.ok(dir.some((x) => x.aliases.length === 1 && x.aliases[0] === 'пятниченк'));
+});
+
+test('пошук викладача за введеним прізвищем', () => {
+  const dir = L.buildTeacherDirectory(sched);
+  assert.strictEqual(L.findTeacher(dir, 'Aлієв Р.').surname, 'Алієв');   // латинська «A»
+  assert.strictEqual(L.findTeacher(dir, 'невідомий'), null);
+});

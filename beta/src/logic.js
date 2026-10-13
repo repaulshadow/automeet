@@ -131,6 +131,7 @@ function surnameMatches(target, part) {
 
 /** Персональний розклад викладача: day -> pair -> ["ГРУПА: Предмет | Викладач"]. */
 function teacherSchedule(sched, surname) {
+  const names = Array.isArray(surname) ? surname : [surname];
   const out = {};
   for (const [group, days] of Object.entries(sched.groups)) {
     for (const [day, periods] of Object.entries(days)) {
@@ -139,7 +140,7 @@ function teacherSchedule(sched, surname) {
           const maybe = opt.startsWith('?');
           const [subj, teacher] = parseOption(opt);
           if (!teacher) continue;
-          if (!teacher.split(/[/,]/).some((p) => surnameMatches(surname, p))) continue;
+          if (!teacher.split(/[/,]/).some((p) => names.some((n) => surnameMatches(n, p)))) continue;
           const label = `${maybe ? '?' : ''}${group}: ${subj} | ${teacher}`;
           out[day] = out[day] || {};
           out[day][period] = out[day][period] || [];
@@ -149,6 +150,124 @@ function teacherSchedule(sched, surname) {
     }
   }
   return out;
+}
+
+
+// ---------- список викладачів (для вибору зі списку) ----------
+/** «Скелет» прізвища: прибирає різницю и/і/ї, є/е, апострофи, латиницю-двійників. */
+function skeleton(w) {
+  return normName(w).replace(/[иыї]/g, 'і').replace(/[єёэ]/g, 'е').replace(/ъ/g, '');
+}
+
+/** Чи ймовірно, що a і b — той самий викладач (різні написання/описки одного прізвища). */
+function sameTeacher(a, b) {
+  if (a === b) return true;
+  const [s, l] = a.length <= b.length ? [a, b] : [b, a];
+  if (s.length < 5) return false;
+  // обрізане прізвище: «пятніченк» ~ «пятніченко», але НЕ «калугін» ~ «калугіна» (жіноча форма)
+  if (l.length - s.length === 1 && l.startsWith(s) && !'ая'.includes(l[l.length - 1])) return true;
+  // одна пропущена/зайва/замінена літера всередині, при тому самому закінченні
+  if (l[l.length - 1] !== s[s.length - 1]) return false;
+  if (l.length === s.length) {
+    let diff = 0;
+    for (let i = 0; i < l.length; i++) if (l[i] !== s[i]) diff++;
+    return diff === 1 && l.length >= 7;
+  }
+  if (l.length - s.length === 1 && l.length >= 7) {
+    for (let i = 0; i < l.length; i++) if (l.slice(0, i) + l.slice(i + 1) === s) return true;
+  }
+  return false;
+}
+
+/**
+ * Список викладачів зі schedule.json: [{id, name, aliases, pairs}] за абеткою.
+ * aliases — усі написання прізвища (для пошуку пар), pairs — скільки записів у розкладі.
+ * Необов'язкове налаштування в schedule.json:
+ *   "teachers": { "merge": [["Лиховидоа","Лиховидова"]], "split": [["Калугін","Калугіна"]], "hide": ["ТБД"] }
+ * merge — примусово об'єднати; split — примусово НЕ об'єднувати; hide — не показувати.
+ */
+function buildTeacherDirectory(sched) {
+  const cfg = sched.teachers || {};
+  const hide = new Set((cfg.hide || []).map(skeleton));
+  const variants = new Map(); // skeleton -> {raw: Map(rawWord->count), norms:Set, rests: Map, pairs}
+  for (const days of Object.values(sched.groups)) {
+    for (const periods of Object.values(days)) {
+      for (const opts of Object.values(periods)) {
+        for (const opt of opts) {
+          const [, teacher] = parseOption(opt);
+          if (!teacher || teacher.includes('*')) continue;
+          for (const part of teacher.split(/[/,]/)) {
+            const toks = part.trim().split(/\s+/);
+            const word = (toks[0] || '').replace(/[.,;:()]+$/g, '');
+            if (!/^[\p{L}'’ʼ`-]{3,}$/u.test(word)) continue;
+            const key = skeleton(word);
+            if (hide.has(key)) continue;
+            let v = variants.get(key);
+            if (!v) { v = { raw: new Map(), norms: new Set(), rests: new Map(), pairs: 0 }; variants.set(key, v); }
+            v.raw.set(word, (v.raw.get(word) || 0) + 1);
+            v.norms.add(normName(word));
+            v.pairs++;
+            const rest = toks.slice(1).join('').replace(/\(.*?\)/g, '').replace(/[,;]+$/g, '');
+            if (rest && /^[\p{L}.]+$/u.test(rest)) v.rests.set(rest, (v.rests.get(rest) || 0) + 1);
+          }
+        }
+      }
+    }
+  }
+  // об'єднання схожих
+  const keys = [...variants.keys()];
+  const parent = new Map(keys.map((k) => [k, k]));
+  const find = (k) => { while (parent.get(k) !== k) { parent.set(k, parent.get(parent.get(k))); k = parent.get(k); } return k; };
+  const union = (a, b) => { const x = find(a), y = find(b); if (x !== y) parent.set(x, y); };
+  const splitPairs = new Set();
+  for (const grp of cfg.split || []) for (const a of grp) for (const b of grp) splitPairs.add(skeleton(a) + '|' + skeleton(b));
+  for (let i = 0; i < keys.length; i++) {
+    for (let j = i + 1; j < keys.length; j++) {
+      if (splitPairs.has(keys[i] + '|' + keys[j])) continue;
+      if (sameTeacher(keys[i], keys[j])) union(keys[i], keys[j]);
+    }
+  }
+  for (const grp of cfg.merge || []) {
+    const ks = grp.map(skeleton).filter((k) => variants.has(k));
+    for (let i = 1; i < ks.length; i++) union(ks[0], ks[i]);
+  }
+  const clusters = new Map();
+  for (const k of keys) {
+    const r = find(k);
+    if (!clusters.has(r)) clusters.set(r, []);
+    clusters.get(r).push(variants.get(k));
+  }
+  const out = [];
+  for (const members of clusters.values()) {
+    const raw = new Map(), rests = new Map();
+    const aliases = new Set();
+    let pairs = 0;
+    for (const m of members) {
+      for (const [w, c] of m.raw) raw.set(w, (raw.get(w) || 0) + c);
+      for (const [w, c] of m.rests) rests.set(w, (rests.get(w) || 0) + c);
+      m.norms.forEach((n) => aliases.add(n));
+      pairs += m.pairs;
+    }
+    const top = (map) => [...map.entries()].sort((a, b) => b[1] - a[1] || b[0].length - a[0].length)[0];
+    // показуємо найповніше з частих написань (з апострофом тощо)
+    const name = top(raw)[0];
+    // ініціали: бажано повні («Г.В.»), а не уривок («Г»)
+    const full = new Map([...rests].filter(([w]) => /^[\p{L}]\.?[\p{L}]\.?$/u.test(w)));
+    let initials = full.size ? top(full)[0] : (rests.size ? top(rests)[0] : '');
+    if (/^[\p{L}]\.[\p{L}]$/u.test(initials)) initials += '.';
+    else if (/^[\p{L}][\p{L}]$/u.test(initials)) initials = `${initials[0]}.${initials[1]}.`;
+    out.push({ name: initials ? `${name} ${initials}` : name, surname: name, aliases: [...aliases].sort(), pairs });
+  }
+  out.sort((a, b) => a.surname.localeCompare(b.surname, 'uk'));
+  out.forEach((t, i) => { t.id = String(i); });
+  return out;
+}
+
+/** Знаходить викладача зі списку за введеним вручну прізвищем (або null). */
+function findTeacher(directory, typed) {
+  const n = normName(typed || '').split(/\s+/)[0];
+  if (!n) return null;
+  return directory.find((t) => t.aliases.includes(n)) || null;
 }
 
 function groupCourse(name) {
@@ -282,6 +401,6 @@ function buildOptions(mySched, isTeacher) {
 module.exports = {
   DAYS, DURATION_MIN, isoDate, parseIso, weekday, startOfDay, addDays, isoWeek, weekParity,
   seqRatio, norm, tokSim, subjectScore, teacherBonus, parseOption, rank, normCode, filterByGroup,
-  normName, surnameMatches, teacherSchedule, groupCourse, groupsByCourse,
+  normName, surnameMatches, teacherSchedule, skeleton, sameTeacher, buildTeacherDirectory, findTeacher, groupCourse, groupsByCourse,
   saturdayValue, effectiveDay, pairTimes, dayPairs, computeStatus, pairsLeftToday, buildOptions, labelOf,
 };

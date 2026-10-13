@@ -68,7 +68,8 @@ class Engine extends EventEmitter {
     this.sched = this.store.loadSchedule();
     const st = this.store.state;
     if (!this.sched || !st.mode) return false;
-    this.mySched = this.isTeacher ? L.teacherSchedule(this.sched, st.surname)
+    this.mySched = this.isTeacher
+      ? L.teacherSchedule(this.sched, st.aliases && st.aliases.length ? st.aliases : st.surname)
       : (this.sched.groups[st.group] || {});
     return true;
   }
