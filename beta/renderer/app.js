@@ -58,6 +58,9 @@ function header(spec) {
   return out;
 }
 
+// для пошуку: без апострофів, и=і=ї, є=е (щоб «пятн» знаходило «П'ятниченко»)
+const fold = (s) => s.toLowerCase().replace(/['’ʼ`]/g, '').replace(/[иыї]/g, 'і').replace(/[єёэ]/g, 'е');
+
 function showChoose(spec) {
   const d = $('dialog');
   let items = spec.items;
@@ -79,8 +82,8 @@ function showChoose(spec) {
     const cur = list.querySelector('.sel'); if (cur) cur.scrollIntoView({ block: 'nearest' });
   };
   if (search) search.oninput = () => {
-    const q = search.value.trim().toLowerCase();
-    shown = q ? items.filter((i) => i.label.toLowerCase().includes(q)) : items;
+    const q = fold(search.value.trim());
+    shown = q ? items.filter((i) => i.sticky || fold(i.label).includes(q)) : items;
     sel = 0; draw();
   };
   ok.onclick = () => { if (shown[sel]) reply(shown[sel].value); };

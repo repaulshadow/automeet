@@ -111,14 +111,29 @@ async function runSetup() {
   if (!role) return false;
   const st = { mode: role.value, map: {}, last: {}, unmatched: [], saturdays: (store.state.saturdays || {}) };
   if (role.value === 'teacher') {
-    const sn = await ask({ kind: 'text', title: 'Прізвище', text: 'Введіть своє прізвище так, як воно написано в розкладі:' });
-    const surname = sn && sn.value && sn.value.trim();
-    if (!surname) return false;
-    if (!Object.keys(L.teacherSchedule(sched, surname)).length) {
+    const dir = L.buildTeacherDirectory(sched);
+    const MANUAL = 'manual';
+    const items = dir.map((t) => ({ value: t.id, label: `${t.name}  ·  ${t.pairs} у розкладі` }));
+    items.push({ value: MANUAL, label: 'Мого прізвища немає в списку (ввести вручну)', sticky: true });
+    const pick = await ask({ kind: 'choose', title: 'Оберіть себе в списку викладачів', text: 'Можна друкувати для пошуку.', items, timeoutMs: 0 });
+    if (!pick) return false;
+    let surname, aliases;
+    if (pick.value === MANUAL) {
+      const sn = await ask({ kind: 'text', title: 'Прізвище', text: 'Введіть своє прізвище так, як воно написано в розкладі:' });
+      surname = sn && sn.value && sn.value.trim();
+      if (!surname) return false;
+      const known = L.findTeacher(dir, surname); // раптом воно є в списку під іншим написанням
+      aliases = known ? known.aliases : [surname];
+      if (known) surname = known.surname;
+    } else {
+      const t = dir.find((x) => x.id === pick.value);
+      surname = t.surname; aliases = t.aliases;
+    }
+    if (!Object.keys(L.teacherSchedule(sched, aliases)).length) {
       await ask({ kind: 'info', title: 'Нічого не знайдено', text: `За прізвищем «${surname}» у розкладі пар немає. Перевірте написання.` });
       return false;
     }
-    st.surname = surname; st.teacherName = surname;
+    st.surname = surname; st.teacherName = surname; st.aliases = aliases;
   } else {
     const g = await ask({ kind: 'group', title: 'Оберіть свою групу', groups: L.groupsByCourse(Object.keys(sched.groups)) });
     if (!g) return false;
