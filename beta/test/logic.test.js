@@ -104,3 +104,21 @@ test('пошук викладача за введеним прізвищем', (
   assert.strictEqual(L.findTeacher(dir, 'Aлієв Р.').surname, 'Алієв');   // латинська «A»
   assert.strictEqual(L.findTeacher(dir, 'невідомий'), null);
 });
+
+test('Store: міграція, імена, ліміт', () => {
+  const fs = require('fs'), os = require('os'), path = require('path');
+  const { Store } = require('../src/store');
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'am-st-'));
+  fs.writeFileSync(path.join(dir, 'state.json'), JSON.stringify({ mode: 'teacher', surname: 'Мазур', teacherName: 'Мазур Г.В.', map: { a: 1 } }));
+  const st = new Store(dir, path.join(__dirname, '..', '..'));
+  assert.equal(st.profiles.length, 1);
+  assert.equal(st.profiles[0].id, 'p1');
+  assert.equal(st.profileName(st.profiles[0]), 'Мазур Г.В.');
+  assert.ok(st.browserProfileDir('p1', 'chrome').endsWith(path.join('profiles', 'chrome')));
+  assert.ok(st.browserProfileDir('p2', 'chrome').endsWith('p2-chrome'));
+  st.profiles.push({ id: 'p2', mode: 'teacher', teacherName: 'Мазур Г.В.' });
+  assert.notEqual(st.profileName(st.profiles[0]), st.profileName(st.profiles[1]));
+  assert.equal(st.newProfileId(), 'p3');
+  st.removeProfile('p2');
+  assert.equal(st.profiles.length, 1);
+});

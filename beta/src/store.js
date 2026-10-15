@@ -17,6 +17,48 @@ class Store {
     this.scheduleFile = path.join(dataDir, 'schedule.json');
     this.logFile = path.join(dataDir, 'auto_meet.log');
     this.state = this._readJson(this.stateFile, {});
+    this.migrate();
+  }
+
+  // ---------- облікові записи (до 5) ----------
+  /** Старий формат (один профіль у корені state.json) → profiles[0]. */
+  migrate() {
+    const st = this.state;
+    if (st.profiles) return;
+    st.profiles = [];
+    if (st.mode) {
+      const p = { id: 'p1', enabled: true };
+      for (const k of ['mode', 'group', 'surname', 'teacherName', 'aliases', 'map', 'last', 'unmatched', 'weekPattern']) {
+        if (st[k] !== undefined) { p[k] = st[k]; delete st[k]; }
+      }
+      st.profiles.push(p);
+      st.viewId = 'p1';
+      this.save();
+    }
+  }
+  get profiles() { return this.state.profiles || (this.state.profiles = []); }
+  getProfile(id) { return this.profiles.find((p) => p.id === id) || null; }
+  profileName(p) {
+    if (p.label) return p.label;
+    const base = p.mode === 'teacher' ? (p.teacherName || p.surname) : p.group;
+    const same = this.profiles.filter((x) => (x.mode === 'teacher' ? (x.teacherName || x.surname) : x.group) === base);
+    return same.length > 1 ? `${base} (${same.indexOf(p) + 1})` : base;
+  }
+  newProfileId() {
+    for (let i = 1; i <= 9; i++) if (!this.getProfile('p' + i)) return 'p' + i;
+    throw new Error('Забагато облікових записів');
+  }
+  /** Папка профілю браузера: p1 використовує старі папки (щоб не втратити вхід у Google). */
+  browserProfileDir(id, kind) {
+    return path.join(this.dir, 'profiles', id === 'p1' ? kind : `${id}-${kind}`);
+  }
+  removeProfile(id) {
+    this.state.profiles = this.profiles.filter((p) => p.id !== id);
+    if (this.state.viewId === id) this.state.viewId = (this.profiles[0] || {}).id;
+    for (const kind of ['chrome', 'edge', 'chromium']) {
+      try { fs.rmSync(this.browserProfileDir(id, kind), { recursive: true, force: true }); } catch { /* ok */ }
+    }
+    this.save();
   }
 
   _readJson(file, dflt) {
