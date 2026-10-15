@@ -5,6 +5,9 @@ name: build-apps
 on:
   workflow_dispatch:
 
+permissions:
+  contents: read
+
 jobs:
   windows:
     runs-on: windows-latest

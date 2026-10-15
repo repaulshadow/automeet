@@ -5,7 +5,7 @@ const fs = require('fs');
 const L = require('./logic');
 const { Store } = require('./store');
 const { Engine, cleanError } = require('./engine');
-const { checkAppUpdate } = require('./updater');
+const { checkAppUpdate, isTrustedUrl } = require('./updater');
 const { UPDATE_CHECK_MS } = require('./store');
 const cfg = require('./config');
 
@@ -414,7 +414,7 @@ async function checkApp(manual) {
       default: 'get', timeoutMs: manual ? 0 : 3 * 60 * 1000,
     });
     if (!r) return;
-    if (r.value === 'get') shell.openExternal(u.url);
+    if (r.value === 'get') { if (isTrustedUrl(u.url)) shell.openExternal(u.url); else shell.openExternal(cfg.RELEASES_PAGE); }
     else if (r.value === 'skip') { store.state.skipVersion = u.version; store.save(); }
   } catch (e) {
     store.log('Перевірка оновлення програми: ' + e.message);
