@@ -16,6 +16,14 @@ function render() {
   const canSub = !!state.canSubstitute;
   $('subBtn').hidden = !canSub;
   $('subHint').hidden = !canSub;
+  const oth = $('others');
+  oth.hidden = !(state.others && state.others.length);
+  oth.replaceChildren(...((state.others || []).map((o) => {
+    const d = document.createElement('div');
+    const b = document.createElement('b'); b.textContent = o.name;
+    d.append('Також працює: ', b, ' — ', o.line);
+    return d;
+  })));
   if (state.phase === 'none' || !state.target) {
     $('phaseText').textContent = state.mode ? 'Пар найближчим часом немає' : 'Потрібне налаштування';
     $('timer').textContent = '--:--:--';
@@ -165,11 +173,50 @@ window.api.onBusy((text) => { $('busy').hidden = !text; $('busyText').textConten
 window.api.onStatus((s) => { state = s; render(); });
 window.api.onStatusText((t) => { $('statusText').textContent = 'Статус: ' + t; });
 window.api.onLog(addLog);
+// ---------- облікові записи ----------
+let accts = { accounts: [], max: 5 };
+function renderAccounts() {
+  const cur = accts.accounts.find((a) => a.viewing) || accts.accounts[0];
+  $('acctName').textContent = cur ? cur.name : 'Обліковий запис';
+  $('acctAvatar').textContent = cur ? cur.name.trim().charAt(0).toUpperCase() : '?';
+  const menu = $('acctMenu');
+  menu.replaceChildren();
+  menu.append(el('div', { className: 'head', textContent: 'Облікові записи: клацніть, щоб переглянути; галочка «Працює» — запускати на парі' }));
+  accts.accounts.forEach((a) => {
+    const who = el('button', { className: 'who', title: 'Показати цей обліковий запис' }, el('b', { textContent: a.name }), el('small', { textContent: a.sub }));
+    who.onclick = () => { window.api.command('select-account', a.id); };
+    const cb = el('input', { type: 'checkbox', checked: a.enabled });
+    cb.onchange = () => window.api.command('toggle-account', { id: a.id, enabled: cb.checked });
+    const lab = el('label', { title: 'Запускати цей обліковий запис за розкладом' }, cb, 'Працює');
+    const ren = el('button', { className: 'mini', textContent: '✎', title: 'Перейменувати', ariaLabel: 'Перейменувати' });
+    ren.onclick = () => { closeMenu(); window.api.command('rename-account', a.id); };
+    const del = el('button', { className: 'mini', textContent: '✕', title: 'Видалити', ariaLabel: 'Видалити' });
+    del.onclick = () => { closeMenu(); window.api.command('remove-account', a.id); };
+    menu.append(el('div', { className: 'row' + (a.viewing ? ' view' : '') }, who, lab, ren, del));
+  });
+  const add = el('button', { className: 'add', textContent: `+ Додати обліковий запис (${accts.accounts.length}/${accts.max})` });
+  add.disabled = accts.accounts.length >= accts.max;
+  add.onclick = () => { closeMenu(); window.api.command('add-account'); };
+  menu.append(add);
+}
+function closeMenu() { $('acctMenu').hidden = true; $('acctBtn').setAttribute('aria-expanded', 'false'); }
+$('acctBtn').onclick = (e) => {
+  e.stopPropagation();
+  const open = $('acctMenu').hidden;
+  $('acctMenu').hidden = !open;
+  $('acctBtn').setAttribute('aria-expanded', String(open));
+};
+document.addEventListener('click', (e) => { if (!$('acctMenu').contains(e.target)) closeMenu(); });
+document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeMenu(); });
+window.api.onAccounts((a) => { accts = a; renderAccounts(); });
+
 $('subBtn').onclick = () => window.api.command('substitute');
 $('settingsBtn').onclick = () => window.api.command('settings');
 
 window.api.init().then((i) => {
   state = i.status || state;
+  accts = i.accounts || accts;
+  renderAccounts();
   (i.log || []).forEach(addLog);
   if (i.busy) { $('busy').hidden = false; $('busyText').textContent = i.busy; }
   render();

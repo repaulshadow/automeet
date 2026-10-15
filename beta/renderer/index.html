@@ -10,7 +10,15 @@
 <body>
   <header>
     <span class="brand">Auto Meet <em>beta</em></span>
-    <button class="ghost" id="settingsBtn">Налаштування</button>
+    <div class="right">
+      <div class="acct-wrap">
+        <button class="acct" id="acctBtn" aria-haspopup="true" aria-expanded="false" title="Облікові записи">
+          <span class="avatar" id="acctAvatar">?</span><span id="acctName">Обліковий запис</span><span class="caret">▾</span>
+        </button>
+        <div class="menu" id="acctMenu" hidden role="menu"></div>
+      </div>
+      <button class="ghost" id="settingsBtn">Налаштування</button>
+    </div>
   </header>
 
   <main class="card">
@@ -23,6 +31,7 @@
     <div class="left" id="left"></div>
     <button class="primary" id="subBtn" hidden>Заміняю пару</button>
     <div class="hint" id="subHint" hidden>Заміна іншого викладача: оберіть групу, пару і курс</div>
+    <div class="others" id="others" hidden></div>
   </main>
 
   <section class="log" id="log" aria-label="Журнал"></section>

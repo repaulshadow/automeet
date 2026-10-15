@@ -6,6 +6,7 @@ const L = require('./logic');
 const { Store } = require('./store');
 const { Engine, cleanError } = require('./engine');
 const { checkAppUpdate } = require('./updater');
+const { UPDATE_CHECK_MS } = require('./store');
 const cfg = require('./config');
 
 app.setName('AutoMeet Beta');
@@ -18,11 +19,14 @@ if (!app.requestSingleInstanceLock()) { app.quit(); }
 let win = null;
 let tray = null;
 let quitting = false;
-let store, engine;
+let store;
+const engines = new Map(); // id облікового запису -> Engine
+let viewId = null;               // який обліковий запис показано на панелі
+const statuses = new Map();      // id -> останній статус
+const MAX_ACCOUNTS = 5;
 let blockerId = null;
 const logTail = [];
 let busyText = null;
-let currentStatus = { phase: 'none' };
 
 // ---------- діалоги через вікно застосунку ----------
 const pending = new Map();
@@ -84,32 +88,133 @@ function setAutostart(on) {
   } catch (e) { store.log('Автозапуск: ' + e.message); return false; }
 }
 
+// ---------- облікові записи ----------
+function getEngine(id = viewId) { return engines.get(id) || null; }
+
+function ensureEngine(p) {
+  let e = engines.get(p.id);
+  if (e) return e;
+  const browsersDir = path.join(app.getPath('userData'), 'browsers');
+  e = new Engine(store, { ask, notify, browsersDir, nodeBinary: process.execPath }, p);
+  e.on('log', (line) => { logTail.push(line); if (logTail.length > 50) logTail.shift(); send('log', line); });
+  e.on('status', (st) => { statuses.set(p.id, st); pushStatus(); });
+  e.on('status-text', ({ id, text }) => { if (id === viewId) send('status-text', text); });
+  engines.set(p.id, e);
+  return e;
+}
+
+function describe(p) {
+  const who = p.mode === 'teacher' ? 'викладач' : 'студент';
+  const detail = p.mode === 'teacher' ? '' : ` · ${p.group}`;
+  return `${who}${detail}`;
+}
+function accountsPayload() {
+  return {
+    max: MAX_ACCOUNTS, viewId,
+    accounts: store.profiles.map((p) => ({
+      id: p.id, name: store.profileName(p), sub: describe(p), mode: p.mode, enabled: !!p.enabled, viewing: p.id === viewId,
+    })),
+  };
+}
+function sendAccounts() { send('accounts', accountsPayload()); }
+
+/** Короткий опис наступної пари для інших активних облікових записів. */
+function othersLine() {
+  const out = [];
+  for (const p of store.profiles) {
+    if (p.id === viewId || !p.enabled) continue;
+    const st = statuses.get(p.id);
+    let line = 'пар найближчим часом немає';
+    if (st && st.target) {
+      const when = st.dayOffset === 0 ? '' : st.dayOffset === 1 ? 'завтра, ' : st.dayDate + ', ';
+      line = `${st.phase === 'during' ? 'йде' : 'далі'} №${st.pair} · ${when}${st.startHM}–${st.endHM} · ${st.label}`;
+    }
+    out.push({ name: store.profileName(p), line });
+  }
+  return out;
+}
+function pushStatus() {
+  const e = getEngine();
+  const st = e ? (statuses.get(viewId) || e.currentStatus()) : { phase: 'none' };
+  send('status', { ...st, others: othersLine() });
+}
+
+function anyEnabled() { return store.profiles.some((p) => p.enabled); }
+
+/** Запускає рушії ввімкнених облікових записів і зупиняє вимкнені. */
+function begin() {
+  if (!store.profiles.length) return;
+  if (!store.getProfile(viewId)) viewId = store.state.viewId && store.getProfile(store.state.viewId) ? store.state.viewId : store.profiles[0].id;
+  for (const p of store.profiles) {
+    const e = ensureEngine(p);
+    e.p = p;
+    e.loadProfile();
+    if (p.enabled) { if (!e.timer) e.start(); }
+    else { e.stop(); e.shutdown().catch(() => {}); statuses.delete(p.id); }
+  }
+  if (anyEnabled()) { if (blockerId == null) blockerId = powerSaveBlocker.start('prevent-app-suspension'); }
+  else if (blockerId != null) { powerSaveBlocker.stop(blockerId); blockerId = null; }
+  sendAccounts();
+  pushStatus();
+}
+
+async function removeAccount(id) {
+  const e = engines.get(id);
+  if (e) { e.stop(); await e.shutdown().catch(() => {}); engines.delete(id); }
+  statuses.delete(id);
+  store.removeProfile(id);
+  if (viewId === id) viewId = (store.profiles[0] || {}).id || null;
+  store.state.viewId = viewId;
+  store.save();
+  begin();
+}
+
+async function confirmAndRemove(id) {
+  const p = store.getProfile(id);
+  if (!p) return;
+  const ok = await ask({
+    kind: 'choose', title: 'Видалити обліковий запис?',
+    text: `«${store.profileName(p)}»: налаштування й вхід у Google для нього буде видалено з цієї програми.`,
+    items: [{ value: 'yes', label: 'Так, видалити' }, { value: 'no', label: 'Ні' }], default: 'no', timeoutMs: 0,
+  });
+  if (!ok || ok.value !== 'yes') return;
+  await removeAccount(id);
+  if (!store.profiles.length) await runSetup(null);
+}
+
 // ---------- сценарії ----------
-function summaryText() {
-  const st = store.state;
-  const lines = [`Профіль: ${st.mode === 'teacher' ? 'викладач ' + st.surname : 'група ' + st.group}.`];
-  const s = engine.currentStatus();
+function summaryText(p) {
+  const e = getEngine(p.id);
+  const lines = [`Обліковий запис: ${store.profileName(p)} (${p.mode === 'teacher' ? 'викладач' : 'група ' + p.group}).`];
+  const s = e.currentStatus();
   if (s.target) {
     const when = s.dayOffset === 0 ? 'сьогодні' : s.dayOffset === 1 ? 'завтра' : s.dayDate;
     lines.push(`Найближча пара: №${s.pair} о ${s.startHM} (${when}) — ${s.label}.`);
     if (s.dayOffset === 0) lines.push(`Пар сьогодні лишилось: ${s.leftToday}.`);
   } else lines.push('Найближчим часом пар немає.');
   lines.push('Автозапуск: ' + (autostartEnabled() ? 'увімкнено' : 'вимкнено') + '.');
-  const miss = (st.unmatched || []).length;
+  const miss = (p.unmatched || []).length;
   if (miss) lines.push(`Пар без прив'язки до курсу Classroom: ${miss} (на них програма не заходитиме).`);
-  if (st.mode === 'teacher') lines.push('Заміняєте чужу пару? Натисніть «Заміняю пару».');
+  if (p.mode === 'teacher') lines.push('Заміняєте чужу пару? Натисніть «Заміняю пару».');
+  lines.push('Інші облікові записи можна додати й увімкнути в меню вгорі праворуч.');
   return lines.join('\n');
 }
 
-async function runSetup() {
+/** Налаштування облікового запису. id=null: новий; id існує: перенастроїти. */
+async function runSetup(id) {
   const sched = store.loadSchedule();
   if (!sched) { await ask({ kind: 'info', title: 'Немає розкладу', text: 'Не знайдено schedule.json. Перевірте інтернет і перезапустіть програму.' }); return false; }
+  if (!id && store.profiles.length >= MAX_ACCOUNTS) {
+    await ask({ kind: 'info', title: 'Ліміт', text: `Можна додати до ${MAX_ACCOUNTS} облікових записів. Видаліть непотрібний.` });
+    return false;
+  }
+  const first = store.profiles.length === 0;
   const role = await ask({
-    kind: 'choose', title: 'Вітаємо в Auto Meet', text: 'Ви студент чи викладач?',
+    kind: 'choose', title: first ? 'Вітаємо в Auto Meet' : 'Новий обліковий запис', text: 'Це студент чи викладач?',
     items: [{ value: 'student', label: 'Студент' }, { value: 'teacher', label: 'Викладач' }], default: 'student', timeoutMs: 0,
   });
   if (!role) return false;
-  const st = { mode: role.value, map: {}, last: {}, unmatched: [], saturdays: (store.state.saturdays || {}) };
+  const data = { mode: role.value, map: {}, last: {}, unmatched: [], weekPattern: {} };
   if (role.value === 'teacher') {
     const dir = L.buildTeacherDirectory(sched);
     const MANUAL = 'manual';
@@ -133,25 +238,39 @@ async function runSetup() {
       await ask({ kind: 'info', title: 'Нічого не знайдено', text: `За прізвищем «${surname}» у розкладі пар немає. Перевірте написання.` });
       return false;
     }
-    st.surname = surname; st.teacherName = surname; st.aliases = aliases;
+    data.surname = surname; data.teacherName = surname; data.aliases = aliases;
   } else {
-    const g = await ask({ kind: 'group', title: 'Оберіть свою групу', groups: L.groupsByCourse(Object.keys(sched.groups)) });
+    const g = await ask({ kind: 'group', title: 'Оберіть групу', groups: L.groupsByCourse(Object.keys(sched.groups)) });
     if (!g) return false;
-    st.group = g.value;
+    data.group = g.value;
   }
-  store.state = st;
+
+  let p = id ? store.getProfile(id) : null;
+  if (p) {
+    for (const k of ['group', 'surname', 'teacherName', 'aliases']) delete p[k];
+    Object.assign(p, data);
+  } else {
+    p = { id: store.newProfileId(), enabled: true, ...data };
+    store.profiles.push(p);
+  }
+  viewId = p.id;
+  store.state.viewId = p.id;
   store.save();
-  engine.loadProfile();
+  const e = ensureEngine(p);
+  e.p = p;
+  e.loadProfile();
+  sendAccounts();
   try {
-    setBusy('Відкриваю Classroom. Якщо попросить, увійдіть у Google-акаунт у вікні браузера…');
-    await engine.mapOptions(false);
-  } catch (e) {
+    setBusy(first ? 'Відкриваю Classroom. Якщо попросить, увійдіть у Google-акаунт у вікні браузера…'
+      : `Відкриваю Classroom для «${store.profileName(p)}». Увійдіть у Google-акаунт ЦЬОГО користувача у вікні браузера…`);
+    await e.mapOptions(false);
+  } catch (err) {
     setBusy(null);
-    store.log('Налаштування: ' + e.message);
-    await ask({ kind: 'info', title: 'Не вдалося зв\'язати курси', text: cleanError(e) + '\n\nМожна повторити: Налаштування → Прив\'язати курси.' });
+    store.log('Налаштування: ' + err.message);
+    await ask({ kind: 'info', title: 'Не вдалося зв\'язати курси', text: cleanError(err) + '\n\nМожна повторити: Налаштування → Прив\'язати курси.' });
   }
   setBusy(null);
-  if (!autostartEnabled()) {
+  if (!autostartEnabled() && first) {
     const a = await ask({
       kind: 'choose', title: 'Автозапуск',
       text: 'Питати при кожному вході в комп\'ютер, чи запускати Auto Meet? Нічого не запуститься без вашої згоди.',
@@ -160,16 +279,29 @@ async function runSetup() {
     if (a && a.value === 'yes') setAutostart(true);
   }
   begin();
-  await ask({ kind: 'info', title: 'Готово!', text: summaryText() });
+  await ask({ kind: 'info', title: 'Готово!', text: summaryText(p) });
   return true;
 }
 
+async function runRename(id) {
+  const p = store.getProfile(id);
+  if (!p) return;
+  const r = await ask({ kind: 'text', title: 'Назва облікового запису', text: 'Наприклад: «Син», «Я (викладач)». Порожнє поле поверне назву за замовчуванням.', default: p.label || '' });
+  if (!r) return;
+  p.label = (r.value || '').trim() || undefined;
+  if (!p.label) delete p.label;
+  store.save();
+  sendAccounts();
+  pushStatus();
+}
+
 async function runSubstitute() {
-  if (!engine.sched) return;
-  const sched = engine.sched;
+  const eng = getEngine();
+  if (!eng || !eng.sched || !eng.isTeacher) return;
+  const sched = eng.sched;
   const g = await ask({ kind: 'group', title: 'Заміна: оберіть групу', groups: L.groupsByCourse(Object.keys(sched.groups)) });
   if (!g) return;
-  const pairs = engine.upcomingPairsToday();
+  const pairs = eng.upcomingPairsToday();
   if (!pairs.length) { await ask({ kind: 'info', title: 'Заміна', text: 'Сьогодні пари вже закінчились.' }); return; }
   const hm = (ms) => new Date(ms).toTimeString().slice(0, 5);
   const p = await ask({
@@ -182,7 +314,7 @@ async function runSubstitute() {
   let courses;
   try {
     setBusy('Читаю курси Classroom…');
-    courses = await engine.substituteCourses(g.value);
+    courses = await eng.substituteCourses(g.value);
   } catch (e) {
     setBusy(null);
     await ask({ kind: 'info', title: 'Помилка', text: 'Не вдалося прочитати курси Classroom: ' + cleanError(e) });
@@ -195,48 +327,58 @@ async function runSubstitute() {
   });
   if (!c) return;
   const course = courses[+c.value];
-  engine.addSubstitution({ group: g.value, pair: pair.pair, start: pair.start, end: pair.end, title: course.title, url: course.url });
+  eng.addSubstitution({ group: g.value, pair: pair.pair, start: pair.start, end: pair.end, title: course.title, url: course.url });
+}
+
+async function reloadAllAfterScheduleUpdate() {
+  for (const p of store.profiles) {
+    const e = getEngine(p.id);
+    if (!e) continue;
+    e.loadProfile();
+    e.mapOptions(true).catch((err) => e.log('Прив\'язка нових пар: ' + cleanError(err)));
+  }
+  pushStatus();
 }
 
 async function runSettings() {
   for (;;) {
     const on = autostartEnabled();
+    const cur = store.getProfile(viewId);
     const r = await ask({
-      kind: 'choose', title: 'Налаштування', text: `Auto Meet Beta ${VERSION}`,
+      kind: 'choose', title: 'Налаштування', text: `Auto Meet Beta ${VERSION}` + (cur ? `\nОбліковий запис: ${store.profileName(cur)}` : ''),
       items: [
         { value: 'autostart', label: on ? 'Вимкнути автозапуск' : 'Увімкнути автозапуск' },
-        { value: 'map', label: 'Прив\'язати курси Classroom ще раз' },
+        { value: 'map', label: 'Прив\'язати курси Classroom ще раз (для цього облікового запису)' },
         { value: 'update', label: 'Перевірити оновлення розкладу' },
         { value: 'appupdate', label: 'Перевірити оновлення програми' },
         { value: 'log', label: 'Відкрити журнал' },
-        { value: 'reset', label: 'Змінити профіль (скинути налаштування)' },
+        { value: 'reconf', label: 'Перенастроїти цей обліковий запис (група / викладач)' },
+        { value: 'remove', label: 'Видалити цей обліковий запис' },
       ], timeoutMs: 0,
     });
     if (!r) return;
+    const eng = getEngine();
     if (r.value === 'autostart') { setAutostart(!on); }
     else if (r.value === 'map') {
-      try { setBusy('Читаю курси Classroom…'); store.state.unmatched = []; await engine.mapOptions(false); }
+      if (!eng) continue;
+      try { setBusy('Читаю курси Classroom…'); cur.unmatched = []; await eng.mapOptions(false); }
       catch (e) { await ask({ kind: 'info', title: 'Помилка', text: cleanError(e) }); }
       setBusy(null);
     } else if (r.value === 'update') {
       setBusy('Перевіряю оновлення…');
       const changed = await store.updateSchedule();
       setBusy(null);
-      if (changed) { engine.loadProfile(); engine.mapOptions(true).catch(() => {}); }
+      if (changed) reloadAllAfterScheduleUpdate();
       await ask({ kind: 'info', title: 'Розклад', text: changed ? 'Розклад оновлено.' : 'У вас актуальна версія розкладу.' });
     } else if (r.value === 'appupdate') {
       setBusy('Перевіряю нову версію…');
       try { await checkApp(true); } finally { setBusy(null); }
     } else if (r.value === 'log') {
       shell.openPath(store.logFile);
-    } else if (r.value === 'reset') {
-      const ok = await ask({ kind: 'choose', title: 'Скинути налаштування?', text: 'Профіль і прив\'язки курсів буде видалено.',
-        items: [{ value: 'yes', label: 'Так, скинути' }, { value: 'no', label: 'Ні' }], default: 'no', timeoutMs: 0 });
-      if (ok && ok.value === 'yes') {
-        engine.stop(); store.reset();
-        await runSetup();
-        return;
-      }
+    } else if (r.value === 'reconf') {
+      if (cur) { await runSetup(cur.id); return; }
+    } else if (r.value === 'remove') {
+      if (cur) { await confirmAndRemove(cur.id); return; }
     }
   }
 }
@@ -272,22 +414,49 @@ async function checkApp(manual) {
   } finally { appCheckRunning = false; }
 }
 function scheduleAppChecks() {
-  const due = () => store.state.mode && Date.now() - (store.state.lastAppCheck || 0) > cfg.APP_CHECK_MS;
+  const due = () => store.profiles.length && Date.now() - (store.state.lastAppCheck || 0) > cfg.APP_CHECK_MS;
   setTimeout(() => { if (due()) checkApp(false); }, 20 * 1000);
   setInterval(() => { if (due()) checkApp(false); }, 30 * 60 * 1000);
 }
 
-function begin() {
-  engine.loadProfile();
-  if (blockerId == null) blockerId = powerSaveBlocker.start('prevent-app-suspension');
-  engine.start();
+// ---------- спільні перевірки (раз на 20 с) ----------
+let lastScheduleCheck = Date.now();
+const askedSat = new Set();
+async function managerTick() {
+  if (!store.profiles.length) return;
+  const now = new Date();
+  if (Date.now() - lastScheduleCheck > UPDATE_CHECK_MS) {
+    lastScheduleCheck = Date.now();
+    if (await store.updateSchedule()) { notify('Розклад оновлено.'); reloadAllAfterScheduleUpdate(); }
+  }
+  // субота без відомого дня: питаємо один раз для всіх облікових записів
+  if (L.weekday(now) === 5 && anyEnabled() && L.saturdayValue(now, store.state.saturdays || {}) === null &&
+      !askedSat.has(L.isoDate(now))) {
+    askedSat.add(L.isoDate(now));
+    const ans = await ask({
+      kind: 'choose', title: 'Сьогодні субота', text: 'За розкладом якого дня навчаємось?',
+      items: ['пн', 'вт', 'ср', 'чт', 'пт', 'Сьогодні пар нема'].map((v) => ({ value: v, label: v })),
+      default: 'Сьогодні пар нема', timeoutMs: 10 * 60 * 1000,
+    });
+    if (ans) {
+      store.state.saturdays = store.state.saturdays || {};
+      store.state.saturdays[L.isoDate(now)] = L.DAYS.slice(0, 5).includes(ans.value) ? ans.value : 'нема';
+      store.save();
+      pushStatus();
+    }
+  }
 }
 
 // ---------- запуск ----------
 async function startupGate() {
-  if (!store.state.mode) return true;
-  engine.loadProfile();
-  if (L.pairsLeftToday(engine.sched, engine.mySched, new Date(), store.state.saturdays || {}, []) === false) return false;
+  if (!store.profiles.length) return true;
+  const sched = store.loadSchedule();
+  const sat = store.state.saturdays || {};
+  const any = store.profiles.filter((p) => p.enabled).some((p) => {
+    const my = p.mode === 'teacher' ? L.teacherSchedule(sched, p.aliases && p.aliases.length ? p.aliases : p.surname) : (sched.groups[p.group] || {});
+    return L.pairsLeftToday(sched, my, new Date(), sat, []) !== false;
+  });
+  if (!any) return false;
   const r = await dialog.showMessageBox({
     type: 'question', title: 'Auto Meet', message: 'Запустити Auto Meet на сьогоднішні пари?',
     buttons: ['Так, запустити', 'Ні, не зараз', 'Більше не питати'], defaultId: 0, cancelId: 1,
@@ -319,14 +488,25 @@ function createTray() {
   } catch (e) { store.log('Трей: ' + e.message); }
 }
 
-ipcMain.handle('init', () => ({
-  version: VERSION, configured: !!store.state.mode, status: engine.currentStatus(),
-  log: logTail.slice(-8), busy: busyText,
-}));
-ipcMain.handle('command', async (_e, name) => {
+ipcMain.handle('init', () => {
+  const e = getEngine();
+  return {
+    version: VERSION, configured: store.profiles.length > 0,
+    status: { ...(e ? (statuses.get(viewId) || e.currentStatus()) : { phase: 'none' }), others: othersLine() },
+    accounts: accountsPayload(), log: logTail.slice(-8), busy: busyText,
+  };
+});
+ipcMain.handle('command', async (_e, name, arg) => {
   if (name === 'substitute') await runSubstitute();
   else if (name === 'settings') await runSettings();
-  else if (name === 'setup') await runSetup();
+  else if (name === 'add-account') await runSetup(null);
+  else if (name === 'select-account') {
+    if (store.getProfile(arg)) { viewId = arg; store.state.viewId = arg; store.save(); sendAccounts(); pushStatus(); }
+  } else if (name === 'toggle-account') {
+    const p = store.getProfile(arg && arg.id);
+    if (p) { p.enabled = !!arg.enabled; store.save(); begin(); }
+  } else if (name === 'rename-account') await runRename(arg);
+  else if (name === 'remove-account') await confirmAndRemove(arg);
 });
 
 app.on('second-instance', showWindow);
@@ -336,11 +516,7 @@ app.on('activate', showWindow);
 
 app.whenReady().then(async () => {
   store = new Store(app.getPath('userData'), (app.isPackaged ? process.resourcesPath : path.join(__dirname, '..', '..')));
-  const browsersDir = path.join(app.getPath('userData'), 'browsers');
-  engine = new Engine(store, { ask, notify, browsersDir, nodeBinary: process.execPath });
-  engine.on('log', (line) => { logTail.push(line); if (logTail.length > 50) logTail.shift(); send('log', line); });
-  engine.on('status', (s) => { currentStatus = s; send('status', s); });
-  engine.on('status-text', (t) => send('status-text', t));
+  viewId = (store.getProfile(store.state.viewId) || store.profiles[0] || {}).id || null;
 
   if (IS_STARTUP || process.argv.includes('--startup')) {
     if (!(await startupGate())) { quitting = true; app.quit(); return; }
@@ -348,11 +524,10 @@ app.whenReady().then(async () => {
   createWindow();
   createTray();
   win.webContents.once('did-finish-load', async () => {
-    store.updateSchedule().then((changed) => {
-      if (changed && store.state.mode) { engine.loadProfile(); engine.mapOptions(true).catch(() => {}); }
-    });
+    store.updateSchedule().then((changed) => { if (changed) reloadAllAfterScheduleUpdate(); });
     scheduleAppChecks();
-    if (store.state.mode) begin();
-    else { showWindow(); await runSetup(); }
+    setInterval(() => managerTick().catch((e) => store.log('managerTick: ' + e.message)), 20 * 1000);
+    if (store.profiles.length) begin();
+    else { showWindow(); await runSetup(null); }
   });
 });

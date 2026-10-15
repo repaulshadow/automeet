@@ -55,6 +55,12 @@ const os = require('os');
     await page.waitForTimeout(400);
     console.log('settings items:', await page.locator('.list button').allInnerTexts());
     await page.screenshot({ path: shots + '/5-settings.png' });
+    await page.keyboard.press('Escape');
+    await page.locator('#acctBtn').click();
+    await page.waitForTimeout(300);
+    console.log('acct rows:', await page.locator('#acctMenu .row').count(), '| add:', await page.locator('#acctMenu .add').innerText());
+    console.log('checkbox checked:', await page.locator('#acctMenu .row input[type=checkbox]').first().isChecked());
+    await page.screenshot({ path: shots + '/7-accounts.png' });
   }
   await app.close();
 })().catch((e) => { console.error('FAIL', e); process.exit(1); });

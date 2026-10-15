@@ -8,7 +8,7 @@ const { Engine } = require('../src/engine');
 (async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'am-scr-'));
   const store = new Store(dir, path.join(__dirname, '..', '..'));
-  const engine = new Engine(store, { ask: async () => null, notify: () => {}, browsersDir: dir, nodeBinary: process.execPath });
+  const engine = new Engine(store, { ask: async () => null, notify: () => {}, browsersDir: dir, nodeBinary: process.execPath }, { id: 'p1', enabled: true, mode: 'student', group: 'КІ-31', map: {} });
   engine.browserCandidates = () => [[null, path.join(dir, 'prof')]];
   const ctx = await engine.acquire();
   let accountsHit = 0;

@@ -6,7 +6,6 @@ const path = require('path');
 const { spawn } = require('child_process');
 const { EventEmitter } = require('events');
 const L = require('./logic');
-const { UPDATE_CHECK_MS } = require('./store');
 
 const ASK_BEFORE_MIN = 10;
 const JOIN_BEFORE_MIN = 1;
@@ -33,40 +32,45 @@ class Engine extends EventEmitter {
   /**
    * @param {Store} store
    * @param {{ask: Function, notify: Function, browsersDir: string, nodeBinary: string}} io
+   * @param {object} profile запис із store.state.profiles (посилання: зміни зберігаються через store.save())
    */
-  constructor(store, io) {
+  constructor(store, io, profile) {
     super();
     this.store = store;
     this.io = io;
+    this.p = profile;
     this.sched = null;
     this.mySched = {};
     this.subs = []; // разові заміни
     this.started = new Set();
-    this.askedSat = new Set();
     this.timer = null;
     this.ctx = null;
     this.ctxUsers = 0;
     this.closeTimer = null;
     this.launching = null;
     this.coursesCache = { t: 0, courses: [] };
-    this.lastUpdateCheck = Date.now();
     this.busy = new Set(); // активні входи на пари
     this.status = 'Очікування';
   }
 
+  get label() { return this.store.profileName(this.p); }
+  get multi() { return this.store.profiles.length > 1; }
   log(msg) {
-    this.store.log(msg);
-    this.emit('log', `${new Date().toLocaleTimeString('uk-UA')}  ${msg}`);
+    const line = this.multi ? `[${this.label}] ${msg}` : msg;
+    this.store.log(line);
+    this.emit('log', `${new Date().toLocaleTimeString('uk-UA')}  ${line}`);
   }
-  setStatus(s) { this.status = s; this.emit('status-text', s); }
+  notify(text) { this.io.notify(this.multi ? `${this.label}: ${text}` : text); }
+  ask(spec) { return this.io.ask(this.multi ? { ...spec, title: `${this.label} · ${spec.title}` } : spec); }
+  setStatus(s) { this.status = s; this.emit('status-text', { id: this.p.id, text: s }); }
 
   // ---------- профіль ----------
-  get isTeacher() { return this.store.state.mode === 'teacher'; }
+  get isTeacher() { return this.p.mode === 'teacher'; }
   get explicitSaturdays() { return this.store.state.saturdays || {}; }
 
   loadProfile() {
     this.sched = this.store.loadSchedule();
-    const st = this.store.state;
+    const st = this.p;
     if (!this.sched || !st.mode) return false;
     this.mySched = this.isTeacher
       ? L.teacherSchedule(this.sched, st.aliases && st.aliases.length ? st.aliases : st.surname)
@@ -74,15 +78,15 @@ class Engine extends EventEmitter {
     return true;
   }
   identity() {
-    const st = this.store.state;
-    return this.isTeacher ? (st.teacherName || st.surname) : st.group;
+    return this.store.profileName(this.p);
   }
   currentStatus() {
     if (!this.sched) return { phase: 'none' };
     const s = L.computeStatus(this.sched, this.mySched, new Date(), this.explicitSaturdays, this.subs);
     s.identity = this.identity();
+    s.profileId = this.p.id;
     s.canSubstitute = this.isTeacher;
-    s.mode = this.store.state.mode;
+    s.mode = this.p.mode;
     s.text = this.status;
     return s;
   }
@@ -90,7 +94,7 @@ class Engine extends EventEmitter {
   // ---------- браузер ----------
   browserCandidates() {
     const out = [];
-    const prof = (n) => path.join(this.store.dir, 'profiles', n);
+    const prof = (n) => this.store.browserProfileDir(this.p.id, n);
     let chrome = [], edge = [];
     if (IS_WIN) {
       const roots = ['LOCALAPPDATA', 'PROGRAMFILES', 'PROGRAMFILES(X86)'].map((k) => process.env[k]).filter(Boolean);
@@ -126,7 +130,7 @@ class Engine extends EventEmitter {
 
   installChromium() {
     // Одноразово завантажує Chromium від Playwright (~150 МБ), якщо Chrome/Edge немає.
-    this.io.notify('Завантажую браузер (одноразово, кілька хвилин)…');
+    this.notify('Завантажую браузер (одноразово, кілька хвилин)…');
     this.log('Завантажую Chromium…');
     const cli = path.join(path.dirname(require.resolve('playwright-core/package.json')), 'cli.js')
       .replace('app.asar' + path.sep, 'app.asar.unpacked' + path.sep);
@@ -180,7 +184,7 @@ class Engine extends EventEmitter {
         this.log(`Не вдалося запустити ${name}: ${String(e.message || e).split('\n')[0]}`);
       }
     }
-    this.io.notify('Не вдалося запустити браузер.');
+    this.notify('Не вдалося запустити браузер.');
     throw new Error('Не вдалося запустити жоден браузер: ' + (lastErr && lastErr.message));
   }
 
@@ -292,7 +296,7 @@ class Engine extends EventEmitter {
 
   /** Прив'язує пари розкладу до курсів Classroom. onlyMissing — лише нові пари. */
   async mapOptions(onlyMissing) {
-    const st = this.store.state;
+    const st = this.p;
     st.map = st.map || {};
     st.unmatched = st.unmatched || [];
     let options = L.buildOptions(this.mySched, this.isTeacher);
@@ -321,7 +325,7 @@ class Engine extends EventEmitter {
     for (const { option, ranked } of todo) {
       n++;
       const items = ranked.map(([s, c], i) => ({ value: String(i), label: `${c.title}  (${Math.round(s * 100)}%)` }));
-      const ans = await this.io.ask({
+      const ans = await this.ask({
         kind: 'choose', title: `Куди заходити на пару? (${n} з ${todo.length})`, text: option,
         items, allowSkip: true, skipLabel: 'Пропустити цю пару', timeoutMs: 0,
       });
@@ -383,21 +387,21 @@ class Engine extends EventEmitter {
       try { await page.locator('body').click({ position: { x: 5, y: 5 }, timeout: 1500 }); } catch { /* не критично */ }
       const micOff = await toggleOff(MIC, `${MOD_KEY}+d`);
       const camOff = await toggleOff(CAM, `${MOD_KEY}+e`);
-      if (!micOff) this.io.notify(`Не вдалося вимкнути мікрофон: ${name}`);
-      if (!camOff) this.io.notify(`Не вдалося вимкнути камеру: ${name}`);
+      if (!micOff) this.notify(`Не вдалося вимкнути мікрофон: ${name}`);
+      if (!camOff) this.notify(`Не вдалося вимкнути камеру: ${name}`);
 
       const ok = await this.clickFirst(page, [
         'button:has-text("Join now")', 'button:has-text("Ask to join")',
         'button:has-text("Приєднатися")', 'button:has-text("Попросити приєднатися")',
         'button:has-text("Присоединиться")', 'button:has-text("Попросить войти")'], 15000);
-      if (!ok) this.io.notify(`Не знайшов кнопку входу: ${name}`);
+      if (!ok) this.notify(`Не знайшов кнопку входу: ${name}`);
 
       await sleep(Math.max(0, endTime - Date.now()));
       await this.clickFirst(page, ['[aria-label*="Leave call" i]', '[aria-label*="Вийти з дзвінка" i]',
         '[aria-label*="Покинуть" i]'], 3000);
     } catch (e) {
       this.log('Помилка: ' + e.message);
-      this.io.notify(`Не вдалося зайти: ${name}`);
+      this.notify(`Не вдалося зайти: ${name}`);
     } finally {
       try { await page.close(); } catch { /* ok */ }
       this.busy.delete(name);
@@ -421,32 +425,7 @@ class Engine extends EventEmitter {
     this.ticking = true;
     try {
       const now = new Date();
-      if (Date.now() - this.lastUpdateCheck > UPDATE_CHECK_MS) {
-        this.lastUpdateCheck = Date.now();
-        if (await this.store.updateSchedule()) {
-          this.loadProfile();
-          this.io.notify('Розклад оновлено.');
-          this.mapOptions(true).catch((e) => this.log('Прив\'язка нових пар: ' + e.message));
-        }
-      }
       this.emit('status', this.currentStatus());
-
-      // субота без відомого дня — питаємо один раз
-      if (L.weekday(now) === 5 && L.saturdayValue(now, this.explicitSaturdays) === null &&
-          !this.askedSat.has(L.isoDate(now))) {
-        this.askedSat.add(L.isoDate(now));
-        this.io.ask({
-          kind: 'choose', title: 'Сьогодні субота', text: 'За розкладом якого дня навчаємось?',
-          items: ['пн', 'вт', 'ср', 'чт', 'пт', 'Сьогодні пар нема'].map((v) => ({ value: v, label: v })),
-          default: 'Сьогодні пар нема', timeoutMs: 10 * 60 * 1000,
-        }).then((ans) => {
-          if (!ans) return;
-          const st = this.store.state;
-          st.saturdays = st.saturdays || {};
-          st.saturdays[L.isoDate(now)] = L.DAYS.slice(0, 5).includes(ans.value) ? ans.value : 'нема';
-          this.store.save();
-        });
-      }
 
       const day = L.effectiveDay(now, this.explicitSaturdays);
       const periods = (day && this.mySched[day]) || {};
@@ -463,7 +442,7 @@ class Engine extends EventEmitter {
   }
 
   async handlePair(pair, options, start, end) {
-    const st = this.store.state;
+    const st = this.p;
     st.last = st.last || {};
     const eff = L.effectiveDay(start, this.explicitSaturdays);
     const groupDayKey = `${L.DAYS.indexOf(eff) >= 0 ? L.DAYS.indexOf(eff) : L.weekday(start)}-${pair}`;
@@ -482,7 +461,7 @@ class Engine extends EventEmitter {
         const items = [...real, dontKnow, none].map((v) => ({ value: v, label: v }));
         const waitLeft = Math.max(0, start.getTime() - Date.now());
         const dflt = st.last[groupDayKey];
-        const ans = await this.io.ask({
+        const ans = await this.ask({
           kind: 'choose', title: `Пара №${pair} (${L.pairTimes(this.sched, pair, L.startOfDay(start))[0].toTimeString().slice(0, 5)})`,
           text: 'Яка пара цього тижня?', items, default: dflt, timeoutMs: waitLeft + 120000,
         });
@@ -508,7 +487,7 @@ class Engine extends EventEmitter {
     }
     if (!chosen) return;
     const url = (st.map || {})[chosen];
-    if (!url) { this.io.notify(`Немає курсу для «${chosen}». Відкрийте Налаштування → Прив'язати курси.`); return; }
+    if (!url) { this.notify(`Немає курсу для «${chosen}». Відкрийте Налаштування → Прив'язати курси.`); return; }
     await sleep(Math.max(0, start.getTime() - JOIN_BEFORE_MIN * 60000 - Date.now()));
     await this.attend(chosen, url, end.getTime());
   }
@@ -536,7 +515,7 @@ class Engine extends EventEmitter {
   addSubstitution({ group, pair, start, end, title, url }) {
     const label = `${group}: ${title}`;
     this.subs.push({ pair, start: new Date(start).toISOString(), end: new Date(end).toISOString(), label });
-    this.io.notify(`Заміна: зайду на «${label}» о ${new Date(start).toTimeString().slice(0, 5)}.`);
+    this.notify(`Заміна: зайду на «${label}» о ${new Date(start).toTimeString().slice(0, 5)}.`);
     this.log(`Заміна додана: ${label}`);
     (async () => {
       await sleep(Math.max(0, start - JOIN_BEFORE_MIN * 60000 - Date.now()));
