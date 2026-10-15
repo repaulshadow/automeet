@@ -1,13 +1,12 @@
 name: build-beta
 
-# Бета-версія (Electron). Працює ТІЛЬКИ для гілки beta і папки beta/ —
-# основну версію (auto_meet.py, build-exe.yml, автооновлення з main) не чіпає.
-# Запуск: автоматично при push у гілку beta, або вручну: Actions -> build-beta -> Run workflow
-# (при ручному запуску оберіть гілку beta).
+# Основна програма (Electron, папка beta/). Старий Python-скрипт у корені лишається
+# лише для тих, хто його вже встановив (автооновлення з main).
+# Запуск: push у main/beta зі змінами в beta/, тег v*, або вручну: Actions -> build-beta -> Run workflow.
 on:
   workflow_dispatch:
   push:
-    branches: [beta]
+    branches: [main, beta]
     tags: ["v*"]            # тег v0.2.0 / v0.2.0-beta.1 => збірка + GitHub Release з інсталяторами
     paths-ignore:
       - "**.md"
