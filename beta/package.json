@@ -1,7 +1,7 @@
 {
   "name": "automeet-beta",
   "productName": "AutoMeet Beta",
-  "version": "0.1.0-beta.2",
+  "version": "0.1.0-beta.3",
   "description": "Auto Meet (бета): автоматичний вхід на пари в Google Meet",
   "main": "src/main.js",
   "author": "OFKTT",
