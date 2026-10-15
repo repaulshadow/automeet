@@ -5,6 +5,8 @@ name: build-beta
 # Запуск: push у main/beta зі змінами в beta/, тег v*, або вручну: Actions -> build-beta -> Run workflow.
 on:
   workflow_dispatch:
+  pull_request:             # перевірка збірки у PR (зокрема від Dependabot); реліз тут не створюється
+    paths: ["beta/**", ".github/workflows/build-beta.yml"]
   push:
     branches: [main, beta]
     tags: ["v*"]            # тег v0.2.0 / v0.2.0-beta.1 => збірка + GitHub Release з інсталяторами
