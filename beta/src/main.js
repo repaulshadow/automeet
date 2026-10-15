@@ -345,16 +345,24 @@ async function runSettings() {
     const on = autostartEnabled();
     const cur = store.getProfile(viewId);
     const r = await ask({
-      kind: 'choose', title: 'Налаштування', text: `Auto Meet Beta ${VERSION}` + (cur ? `\nОбліковий запис: ${store.profileName(cur)}` : ''),
-      items: [
-        { value: 'autostart', label: on ? 'Вимкнути автозапуск' : 'Увімкнути автозапуск' },
-        { value: 'map', label: 'Прив\'язати курси Classroom ще раз (для цього облікового запису)' },
-        { value: 'update', label: 'Перевірити оновлення розкладу' },
-        { value: 'appupdate', label: 'Перевірити оновлення програми' },
-        { value: 'log', label: 'Відкрити журнал' },
-        { value: 'reconf', label: 'Перенастроїти цей обліковий запис (група / викладач)' },
-        { value: 'remove', label: 'Видалити цей обліковий запис' },
-      ], timeoutMs: 0,
+      kind: 'settings', title: 'Налаштування',
+      text: `Auto Meet ${VERSION}` + (cur ? ` · ${store.profileName(cur)}` : ''),
+      groups: [
+        { title: 'Обліковий запис', tiles: [
+          { value: 'map', icon: 'link', label: 'Курси Classroom', sub: 'Прив\'язати ще раз' },
+          { value: 'reconf', icon: 'user', label: 'Група / викладач', sub: 'Змінити' },
+          { value: 'remove', icon: 'trash', label: 'Видалити', sub: 'Скинути запис', danger: true },
+        ] },
+        { title: 'Оновлення', tiles: [
+          { value: 'update', icon: 'calendar', label: 'Розклад', sub: 'Перевірити' },
+          { value: 'appupdate', icon: 'download', label: 'Програма', sub: `Версія ${VERSION}` },
+        ] },
+        { title: 'Система', tiles: [
+          { value: 'autostart', icon: 'power', label: 'Автозапуск', toggle: on, sub: on ? 'Увімкнено' : 'Вимкнено' },
+        ] },
+      ],
+      footer: [{ value: 'log', icon: 'file', label: 'Журнал (для розробників)' }],
+      timeoutMs: 0,
     });
     if (!r) return;
     const eng = getEngine();
