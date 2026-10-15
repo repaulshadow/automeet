@@ -70,3 +70,28 @@ button.acct #acctName { overflow: hidden; text-overflow: ellipsis; white-space: 
 .others { margin-top: 20px; width: 100%; max-width: 440px; text-align: left; border-top: 1px solid var(--line); padding-top: 12px; font-size: 13px; color: var(--muted); }
 .others div { padding: 3px 0; }
 .others b { color: var(--text); }
+
+/* Налаштування: плитки з іконками */
+.dialog.wide { width: min(520px, 100%); }
+.sgroups { overflow: auto; max-height: 76vh; }
+.gtitle { margin: 10px 2px 6px; font-size: 12px; letter-spacing: .08em; text-transform: uppercase; color: var(--dim); }
+.tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 10px; }
+.tile { display: flex; flex-direction: column; align-items: center; gap: 2px; padding: 10px 8px; border-radius: 14px; background: #151c33; }
+.tile:hover { background: #1b2545; transform: translateY(-1px); }
+.tico { position: relative; width: 46px; height: 46px; border-radius: 14px; display: grid; place-items: center; background: #24336a; margin-bottom: 4px; }
+.ico { width: 24px; height: 24px; fill: none; stroke: #cfd8ff; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+.tl { font-weight: 600; font-size: 14px; }
+.ts { font-size: 12px; color: var(--muted); }
+.tile.danger .tico { background: #4a2330; }
+.tile.danger .ico { stroke: #ff9aa8; }
+.tile.danger:hover { border-color: #ff6b81; }
+.tile.on .tico { background: #1d5b3d; }
+.tile.on .ico { stroke: #aaf3cb; }
+.tile.on .ts { color: var(--ok); font-weight: 600; }
+.tile.off .ts { color: var(--dim); }
+.badge { position: absolute; right: -5px; top: -5px; min-width: 18px; height: 18px; border-radius: 9px; background: var(--ok); color: #06210f; font-size: 12px; font-weight: 800; display: grid; place-items: center; }
+.badge:empty { display: none; }
+.sfoot { display: flex; justify-content: space-between; align-items: center; margin-top: 16px; flex-direction: row-reverse; }
+button.tiny { padding: 6px; border-radius: 8px; opacity: .4; }
+button.tiny:hover { opacity: 1; }
+button.tiny .ico { width: 18px; height: 18px; }

@@ -52,7 +52,7 @@ function addLog(line) {
 
 // ---------- діалоги ----------
 const dlg = { id: null };
-function closeDialog() { $('modal').hidden = true; $('dialog').replaceChildren(); dlg.id = null; }
+function closeDialog() { $('modal').hidden = true; $('dialog').classList.remove('wide'); $('dialog').replaceChildren(); dlg.id = null; }
 function reply(value) { if (dlg.id != null) window.api.askReply(dlg.id, value); closeDialog(); }
 function el(tag, props = {}, ...kids) {
   const e = document.createElement(tag);
@@ -112,6 +112,52 @@ function showChoose(spec) {
   (search || ok).focus();
 }
 
+const ICONS = {
+  link: '<path d="M10 14a4 4 0 0 0 5.7 0l3-3a4 4 0 0 0-5.7-5.7l-1 1"/><path d="M14 10a4 4 0 0 0-5.7 0l-3 3a4 4 0 0 0 5.7 5.7l1-1"/>',
+  user: '<circle cx="12" cy="8" r="4"/><path d="M4 21a8 8 0 0 1 16 0"/>',
+  trash: '<path d="M4 7h16"/><path d="M9 7V4h6v3"/><path d="M6 7l1 13h10l1-13"/><path d="M10 11v6M14 11v6"/>',
+  calendar: '<rect x="3" y="5" width="18" height="16" rx="3"/><path d="M3 10h18M8 3v4M16 3v4"/><path d="M9 15l2 2 4-4"/>',
+  download: '<path d="M12 3v12"/><path d="M7 11l5 5 5-5"/><path d="M4 20h16"/>',
+  power: '<path d="M12 3v9"/><path d="M6.3 6.8a8 8 0 1 0 11.4 0"/>',
+  file: '<path d="M7 3h7l5 5v13H7z"/><path d="M14 3v5h5M10 13h6M10 17h6"/>',
+};
+function icon(name) {
+  const s = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+  s.setAttribute('viewBox', '0 0 24 24'); s.setAttribute('class', 'ico');
+  s.innerHTML = ICONS[name] || '';
+  return s;
+}
+
+function showSettings(spec) {
+  const d = $('dialog');
+  d.classList.add('wide');
+  const body = el('div', { className: 'sgroups' });
+  for (const g of spec.groups) {
+    const row = el('div', { className: 'tiles' });
+    for (const t of g.tiles) {
+      const b = el('button', { className: 'tile' + (t.danger ? ' danger' : '') + (t.toggle !== undefined ? (t.toggle ? ' on' : ' off') : '') });
+      const ic = el('span', { className: 'tico' }); ic.append(icon(t.icon));
+      if (t.toggle !== undefined) ic.append(el('span', { className: 'badge', textContent: t.toggle ? '✓' : '' }));
+      b.append(ic, el('span', { className: 'tl', textContent: t.label }), el('span', { className: 'ts', textContent: t.sub || '' }));
+      b.onclick = () => reply(t.value);
+      row.append(b);
+    }
+    body.append(el('div', { className: 'gtitle', textContent: g.title }), row);
+  }
+  const close = el('button', { textContent: 'Закрити' });
+  close.onclick = () => reply(null);
+  const foot = el('div', { className: 'sfoot' });
+  for (const f of spec.footer || []) {
+    const b = el('button', { className: 'ghost tiny', title: f.label });
+    b.setAttribute('aria-label', f.label);
+    b.append(icon(f.icon)); b.onclick = () => reply(f.value); foot.append(b);
+  }
+  foot.append(close);
+  d.append(...header(spec), body, foot);
+  d.onkeydown = (e) => { if (e.key === 'Escape') reply(null); };
+  close.focus();
+}
+
 function showGroup(spec) {
   const d = $('dialog');
   const courses = spec.groups; // [{course, groups}]
@@ -166,7 +212,7 @@ window.api.onAsk((spec) => {
   dlg.id = spec.id;
   $('busy').hidden = true;
   $('modal').hidden = false;
-  ({ choose: showChoose, group: showGroup, text: showText, info: showInfo }[spec.kind] || showInfo)(spec);
+  ({ settings: showSettings, choose: showChoose, group: showGroup, text: showText, info: showInfo }[spec.kind] || showInfo)(spec);
 });
 window.api.onAskCancel(({ id }) => { if (dlg.id === id) closeDialog(); });
 window.api.onBusy((text) => { $('busy').hidden = !text; $('busyText').textContent = text || ''; });
