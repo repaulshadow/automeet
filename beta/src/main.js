@@ -393,7 +393,7 @@ async function checkApp(manual) {
     store.state.lastAppCheck = Date.now();
     store.save();
     if (!u) {
-      if (manual) await ask({ kind: 'info', title: 'Оновлення програми', text: `У вас остання версія (${VERSION}).` });
+      if (manual) await ask({ kind: 'info', title: 'Оновлення програми', text: `Встановлена версія: ${VERSION}. Новішого опублікованого релізу немає.\n\nЯкщо ви тестуєте збірку з гілки beta, її номер може збігатися з попереднім — номер змінюється лише з новим релізом (тегом v…).` });
       return;
     }
     if (!manual && store.state.skipVersion === u.version) return;
