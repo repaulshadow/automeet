@@ -24,7 +24,7 @@ jobs:
       - name: Build AutoMeet.exe
         run: pyinstaller --onefile --name AutoMeet --collect-all playwright auto_meet.py
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: AutoMeet-windows
           path: dist/AutoMeet.exe
@@ -47,7 +47,7 @@ jobs:
           # tar зберігає право на запуск (zip від GitHub його губить)
           tar -czf dist/AutoMeet-mac.tar.gz -C dist AutoMeet
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: AutoMeet-macos
           path: dist/AutoMeet-mac.tar.gz
@@ -69,7 +69,7 @@ jobs:
           pyinstaller --onefile --name AutoMeet --collect-all playwright auto_meet.py
           tar -czf dist/AutoMeet-mac-intel.tar.gz -C dist AutoMeet
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: AutoMeet-macos-intel
           path: dist/AutoMeet-mac-intel.tar.gz
