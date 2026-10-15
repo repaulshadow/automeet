@@ -67,11 +67,20 @@ async function checkAppUpdate(currentVersion, { platform = process.platform, arc
   const asset = (rel.assets || []).find((a) => a.name === want);
   return {
     version: rel.tag_name.replace(/^v/, ''),
-    url: asset ? asset.browser_download_url : rel.html_url,
+    url: asset && isTrustedUrl(asset.browser_download_url) ? asset.browser_download_url : rel.html_url,
     page: rel.html_url,
     notes: (rel.body || '').trim().slice(0, 600),
     direct: !!asset,
   };
 }
 
-module.exports = { parseVersion, compareVersions, assetNameFor, pickRelease, checkAppUpdate };
+/** Лише https-посилання на GitHub цього репозиторію (захист від підміни адреси у відповіді API). */
+function isTrustedUrl(u) {
+  try {
+    const x = new URL(u);
+    return x.protocol === 'https:' && ['github.com', 'objects.githubusercontent.com', 'release-assets.githubusercontent.com'].includes(x.hostname)
+      && (x.hostname !== 'github.com' || x.pathname.toLowerCase().startsWith(`/${cfg.REPO.toLowerCase()}/`));
+  } catch { return false; }
+}
+
+module.exports = { isTrustedUrl, parseVersion, compareVersions, assetNameFor, pickRelease, checkAppUpdate };
