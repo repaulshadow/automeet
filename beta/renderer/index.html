@@ -1,0 +1,45 @@
+<!DOCTYPE html>
+<html lang="uk">
+<head>
+<meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self'">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Auto Meet Beta</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header>
+    <span class="brand">Auto Meet <em>beta</em></span>
+    <div class="right">
+      <div class="acct-wrap">
+        <button class="acct" id="acctBtn" aria-haspopup="true" aria-expanded="false" title="Облікові записи">
+          <span class="avatar" id="acctAvatar">?</span><span id="acctName">Обліковий запис</span><span class="caret">▾</span>
+        </button>
+        <div class="menu" id="acctMenu" hidden role="menu"></div>
+      </div>
+      <button class="ghost" id="settingsBtn">Налаштування</button>
+    </div>
+  </header>
+
+  <main class="card">
+    <div class="identity" id="identity">Auto Meet</div>
+    <div class="phase"><span class="dot" id="dot"></span><span id="phaseText">Очікування розкладу…</span></div>
+    <div class="timer" id="timer">--:--:--</div>
+    <div class="label" id="label"></div>
+    <div class="sub" id="sub"></div>
+    <div class="next" id="next"></div>
+    <div class="left" id="left"></div>
+    <button class="primary" id="subBtn" hidden>Заміняю пару</button>
+    <div class="hint" id="subHint" hidden>Заміна іншого викладача: оберіть групу, пару і курс</div>
+    <div class="others" id="others" hidden></div>
+  </main>
+
+  <section class="log" id="log" aria-label="Журнал"></section>
+  <footer id="statusText">Статус: очікування</footer>
+
+  <div class="overlay" id="busy" hidden><div class="spinner"></div><p id="busyText"></p></div>
+  <div class="overlay" id="modal" hidden><div class="dialog" id="dialog" role="dialog" aria-modal="true"></div></div>
+
+  <script src="app.js"></script>
+</body>
+</html>

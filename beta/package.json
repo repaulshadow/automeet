@@ -1,0 +1,85 @@
+{
+  "name": "automeet-beta",
+  "productName": "AutoMeet Beta",
+  "version": "0.1.0-beta.2",
+  "description": "Auto Meet (бета): автоматичний вхід на пари в Google Meet",
+  "main": "src/main.js",
+  "author": "OFKTT",
+  "license": "UNLICENSED",
+  "private": true,
+  "scripts": {
+    "start": "electron .",
+    "test": "node --test test/logic.test.js test/updater.test.js",
+    "dist": "electron-builder"
+  },
+  "dependencies": {
+    "playwright-core": "1.48.0"
+  },
+  "devDependencies": {
+    "electron": "33.2.1",
+    "electron-builder": "25.1.8"
+  },
+  "build": {
+    "appId": "com.ofktt.automeet.beta",
+    "productName": "AutoMeet Beta",
+    "files": [
+      "src/**",
+      "renderer/**",
+      "build/tray.png",
+      "package.json"
+    ],
+    "extraResources": [
+      {
+        "from": "../schedule.json",
+        "to": "schedule.json"
+      }
+    ],
+    "asarUnpack": [
+      "node_modules/playwright-core/**"
+    ],
+    "mac": {
+      "category": "public.app-category.education",
+      "target": [
+        {
+          "target": "dmg",
+          "arch": [
+            "x64",
+            "arm64"
+          ]
+        },
+        {
+          "target": "zip",
+          "arch": [
+            "x64",
+            "arm64"
+          ]
+        }
+      ],
+      "hardenedRuntime": true,
+      "gatekeeperAssess": false,
+      "entitlements": "build/entitlements.mac.plist",
+      "entitlementsInherit": "build/entitlements.mac.plist",
+      "icon": "build/icon.png",
+      "notarize": true,
+      "artifactName": "AutoMeet-${version}-mac-${arch}.${ext}"
+    },
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "icon": "build/icon.png"
+    },
+    "nsis": {
+      "oneClick": true,
+      "perMachine": false,
+      "deleteAppDataOnUninstall": false,
+      "artifactName": "AutoMeet-${version}-Setup.${ext}"
+    },
+    "publish": null
+  }
+}
