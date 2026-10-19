@@ -1,0 +1,59 @@
+<!doctype html>
+<html lang="uk"><head><meta charset="utf-8"><title>Auto Meet</title>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<style>
+  :root { color-scheme: dark; }
+  * { box-sizing: border-box; }
+  body { margin: 0; min-height: 100vh; display: grid; place-items: center; padding: 24px; color: #eef1f8;
+    background: radial-gradient(circle at 50% 0%, #1c2333, #0b0e16 65%); font-family: -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; }
+  main { width: min(560px, 100%); text-align: center; }
+  .brand { font-weight: 700; letter-spacing: .02em; color: #8ea2d6; }
+  .who { margin-top: 4px; color: #6f7ca3; font-size: 14px; }
+  .state { margin-top: 28px; font-size: 16px; color: #7c8aae; }
+  .dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: #35d07f; margin-right: 8px; box-shadow: 0 0 10px #35d07f; }
+  .during .dot { background: #ff9f43; box-shadow: 0 0 10px #ff9f43; }
+  .none .dot { background: #56607a; box-shadow: none; }
+  .timer { margin-top: 10px; font-size: clamp(52px, 14vw, 84px); font-weight: 700; font-variant-numeric: tabular-nums; line-height: 1;
+    background: linear-gradient(180deg, #fff, #b9c6ee); -webkit-background-clip: text; background-clip: text; color: transparent; }
+  .during .timer { background: linear-gradient(180deg, #ffd9a8, #ff9f43); -webkit-background-clip: text; background-clip: text; }
+  .label { margin-top: 18px; font-size: 22px; font-weight: 600; }
+  ul { list-style: none; padding: 0; margin: 28px 0 0; text-align: left; border: 1px solid #27304a; border-radius: 14px; overflow: hidden; }
+  li { display: flex; gap: 12px; padding: 10px 14px; border-bottom: 1px solid #27304a; background: #141a2a; color: #9fb0e0; }
+  li:last-child { border-bottom: 0; }
+  li .t { width: 120px; flex: none; white-space: nowrap; font-variant-numeric: tabular-nums; color: #6f7ca3; }
+  li.now { background: #22305c; color: #fff; }
+  li.past { opacity: .45; }
+  .hint { margin-top: 22px; font-size: 13px; color: #56607a; line-height: 1.5; }
+</style></head>
+<body><main id="m">
+  <div class="brand">Auto Meet</div><div class="who" id="who"></div>
+  <div class="state" id="state"></div><div class="timer" id="timer">--:--:--</div>
+  <div class="label" id="label"></div>
+  <ul id="list"></ul>
+  <div class="hint">Ця вкладка — довідкова: програма сама відкриває пари в Meet і виходить за розкладом.<br>Браузер можна згорнути, не вимикайте комп'ютер.</div>
+</main>
+<script>
+  let d = { name: '', pairs: [] };
+  try { d = JSON.parse(decodeURIComponent(location.hash.slice(1))); } catch (e) { /* порожня сторінка */ }
+  const $ = (id) => document.getElementById(id);
+  const hm = (ms) => new Date(ms).toTimeString().slice(0, 5);
+  const fmt = (ms) => { const s = Math.max(0, Math.floor(ms / 1000)); const p = (n) => String(n).padStart(2, '0');
+    return `${p(Math.floor(s / 3600))}:${p(Math.floor(s % 3600 / 60))}:${p(s % 60)}`; };
+  $('who').textContent = d.name || '';
+  const list = $('list');
+  d.pairs.forEach((p) => { const li = document.createElement('li'); li.dataset.s = p.start; li.dataset.e = p.end;
+    li.innerHTML = '<span class="t"></span><span class="n"></span>';
+    li.querySelector('.t').textContent = `${hm(p.start)}–${hm(p.end)}`; li.querySelector('.n').textContent = `№${p.pair} · ${p.label}`; list.append(li); });
+  if (!d.pairs.length) list.hidden = true;
+  function tick() {
+    const now = Date.now();
+    const cur = d.pairs.find((p) => p.start <= now && now < p.end);
+    const next = d.pairs.find((p) => p.start > now);
+    const m = $('m'); m.className = cur ? 'during' : next ? '' : 'none';
+    if (cur) { $('state').innerHTML = '<span class="dot"></span>Йде пара · до завершення'; $('timer').textContent = fmt(cur.end - now); $('label').textContent = cur.label; }
+    else if (next) { $('state').innerHTML = '<span class="dot"></span>До наступної пари'; $('timer').textContent = fmt(next.start - now); $('label').textContent = next.label; }
+    else { $('state').innerHTML = '<span class="dot"></span>На сьогодні пар більше немає'; $('timer').textContent = ''; $('label').textContent = ''; }
+    list.querySelectorAll('li').forEach((li) => { li.className = now >= +li.dataset.e ? 'past' : (now >= +li.dataset.s ? 'now' : ''); });
+  }
+  tick(); setInterval(tick, 1000);
+</script></body></html>

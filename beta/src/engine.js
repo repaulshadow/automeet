@@ -177,6 +177,7 @@ class Engine extends EventEmitter {
           try { await ctx.grantPermissions(['camera', 'microphone'], { origin }); } catch { /* не критично */ }
         }
         await ctx.addInitScript(NO_TRANSLATE_JS);
+        this.showHomePage(ctx).catch(() => { /* не критично */ });
         ctx.on('close', () => { if (this.ctx === ctx) this.ctx = null; });
         return ctx;
       } catch (e) {
@@ -186,6 +187,21 @@ class Engine extends EventEmitter {
     }
     this.notify('Не вдалося запустити браузер.');
     throw new Error('Не вдалося запустити жоден браузер: ' + (lastErr && lastErr.message));
+  }
+
+  /** Замість порожньої вкладки about:blank показуємо довідкову сторінку: таймер і пари дня. */
+  async showHomePage(ctx) {
+    const first = ctx.pages()[0];
+    if (!first) return;
+    const u = first.url();
+    if (u && u !== 'about:blank' && !/^chrome:\/\/newtab|^edge:\/\/newtab/.test(u)) return;
+    const pairs = L.dayPairs(this.sched, this.mySched, L.startOfDay(new Date()), this.explicitSaturdays, this.subs)
+      .map((i) => ({ pair: i.pair, start: i.start.getTime(), end: i.end.getTime(), label: i.label }));
+    // браузер не читає з app.asar, тож кладемо копію в папку даних
+    const file = path.join(this.store.dir, 'browser-home.html');
+    fs.writeFileSync(file, fs.readFileSync(path.join(__dirname, '..', 'renderer', 'browser-home.html')));
+    const hash = encodeURIComponent(JSON.stringify({ name: this.identity(), pairs }));
+    await first.goto('file://' + (file.startsWith('/') ? '' : '/') + file.replace(/\\/g, '/') + '#' + hash);
   }
 
   /** Бере браузер у користування (запускає при потребі). Обов'язково викликати release(). */
