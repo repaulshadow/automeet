@@ -396,7 +396,10 @@ class Engine extends EventEmitter {
         'button:has-text("Присоединиться")', 'button:has-text("Попросить войти")'], 15000);
       if (!ok) this.notify(`Не знайшов кнопку входу: ${name}`);
 
-      await sleep(Math.max(0, endTime - Date.now()));
+      const sched = this.sched || this.store.loadSchedule();
+      const day = L.startOfDay(new Date(endTime - 60000));
+      const starts = Object.keys(sched.bells).map((p) => L.pairTimes(sched, p, day)[0].getTime());
+      await sleep(Math.max(0, L.leaveTime(sched, endTime, starts) - Date.now()));
       await this.clickFirst(page, ['[aria-label*="Leave call" i]', '[aria-label*="Вийти з дзвінка" i]',
         '[aria-label*="Покинуть" i]'], 3000);
     } catch (e) {

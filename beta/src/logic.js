@@ -324,6 +324,19 @@ function pairTimes(sched, pair, dayDate) {
   if (fixed) return [start, setHM(dayDate, fixed)];
   return [start, new Date(start.getTime() + DURATION_MIN * 60000)];
 }
+/**
+ * Коли виходити з Meet: трохи ПІСЛЯ кінця пари (schedule.leave_after_min, типово 3 хв),
+ * але не пізніше, ніж за 2 хв до початку наступної пари (щоб не накладалося на вхід).
+ * startsMs — початки всіх пар дня (мс).
+ */
+const DEFAULT_LEAVE_AFTER_MIN = 3;
+function leaveTime(sched, endMs, startsMs) {
+  const raw = Number(sched && sched.leave_after_min);
+  const delay = (Number.isFinite(raw) && raw >= 0 ? raw : DEFAULT_LEAVE_AFTER_MIN) * 60000;
+  let t = endMs + delay;
+  for (const st of startsMs || []) if (st >= endMs && st - 2 * 60000 < t) t = Math.max(endMs, st - 2 * 60000);
+  return t;
+}
 function labelOf(opts) {
   return opts.map((o) => o.replace(/^\?+/, '').trim()).filter(Boolean).join(' / ');
 }
@@ -402,5 +415,5 @@ module.exports = {
   DAYS, DURATION_MIN, isoDate, parseIso, weekday, startOfDay, addDays, isoWeek, weekParity,
   seqRatio, norm, tokSim, subjectScore, teacherBonus, parseOption, rank, normCode, filterByGroup,
   normName, surnameMatches, teacherSchedule, skeleton, sameTeacher, buildTeacherDirectory, findTeacher, groupCourse, groupsByCourse,
-  saturdayValue, effectiveDay, pairTimes, dayPairs, computeStatus, pairsLeftToday, buildOptions, labelOf,
+  saturdayValue, effectiveDay, pairTimes, leaveTime, dayPairs, computeStatus, pairsLeftToday, buildOptions, labelOf,
 };

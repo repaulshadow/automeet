@@ -122,3 +122,13 @@ test('Store: міграція, імена, ліміт', () => {
   st.removeProfile('p2');
   assert.equal(st.profiles.length, 1);
 });
+
+test('leaveTime: виходимо трохи після кінця, але не накладаючись на наступну пару', () => {
+  const m = (h, mi) => new Date(2026, 9, 19, h, mi).getTime();
+  const sched = { bells: {} };
+  assert.equal(L.leaveTime(sched, m(9, 50), [m(10, 0)]), m(9, 53));            // типово +3 хв
+  assert.equal(L.leaveTime({ leave_after_min: 6 }, m(9, 50), [m(10, 0)]), m(9, 56));
+  assert.equal(L.leaveTime({ leave_after_min: 15 }, m(9, 50), [m(10, 0)]), m(9, 58)); // не пізніше ніж за 2 хв до наступної
+  assert.equal(L.leaveTime({ leave_after_min: 5 }, m(9, 50), [m(9, 50)]), m(9, 50));  // пара впритул: як раніше
+  assert.equal(L.leaveTime({ leave_after_min: 0 }, m(9, 50), []), m(9, 50));
+});

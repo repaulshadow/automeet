@@ -39,6 +39,7 @@ const server = http.createServer((req, res) => {
     ask: async () => null, notify: (t) => console.log('NOTIFY', t),
     browsersDir: process.env.PLAYWRIGHT_BROWSERS_PATH || path.join(dir, 'browsers'), nodeBinary: process.execPath,
   }, { id: 'p1', enabled: true, mode: 'student', group: 'КІ-31', map: {} });
+  engine.sched = { ...store.loadSchedule(), leave_after_min: 0 };
   engine.browserCandidates = () => [[null, path.join(dir, 'prof')]];
   const end = Date.now() + 9000;
   await engine.attend('Тест', `http://localhost:${server.address().port}/course`, end);
