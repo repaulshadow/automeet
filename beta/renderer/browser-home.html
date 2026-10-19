@@ -2,58 +2,47 @@
 <html lang="uk"><head><meta charset="utf-8"><title>Auto Meet</title>
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <style>
-  :root { color-scheme: dark; }
-  * { box-sizing: border-box; }
-  body { margin: 0; min-height: 100vh; display: grid; place-items: center; padding: 24px; color: #eef1f8;
-    background: radial-gradient(circle at 50% 0%, #1c2333, #0b0e16 65%); font-family: -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; }
-  main { width: min(560px, 100%); text-align: center; }
-  .brand { font-weight: 700; letter-spacing: .02em; color: #8ea2d6; }
-  .who { margin-top: 4px; color: #6f7ca3; font-size: 14px; }
-  .state { margin-top: 28px; font-size: 16px; color: #7c8aae; }
-  .dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: #35d07f; margin-right: 8px; box-shadow: 0 0 10px #35d07f; }
-  .during .dot { background: #ff9f43; box-shadow: 0 0 10px #ff9f43; }
-  .none .dot { background: #56607a; box-shadow: none; }
-  .timer { margin-top: 10px; font-size: clamp(52px, 14vw, 84px); font-weight: 700; font-variant-numeric: tabular-nums; line-height: 1;
-    background: linear-gradient(180deg, #fff, #b9c6ee); -webkit-background-clip: text; background-clip: text; color: transparent; }
-  .during .timer { background: linear-gradient(180deg, #ffd9a8, #ff9f43); -webkit-background-clip: text; background-clip: text; }
-  .label { margin-top: 18px; font-size: 22px; font-weight: 600; }
-  ul { list-style: none; padding: 0; margin: 28px 0 0; text-align: left; border: 1px solid #27304a; border-radius: 14px; overflow: hidden; }
-  li { display: flex; gap: 12px; padding: 10px 14px; border-bottom: 1px solid #27304a; background: #141a2a; color: #9fb0e0; }
-  li:last-child { border-bottom: 0; }
-  li .t { width: 120px; flex: none; white-space: nowrap; font-variant-numeric: tabular-nums; color: #6f7ca3; }
-  li.now { background: #22305c; color: #fff; }
-  li.past { opacity: .45; }
-  .hint { margin-top: 22px; font-size: 13px; color: #56607a; line-height: 1.5; }
+  html, body { margin: 0; height: 100%; overflow: hidden; background: #070b16; }
+  canvas { position: fixed; inset: 0; width: 100%; height: 100%; display: block; }
+  .tag { position: fixed; left: 0; right: 0; bottom: 18px; text-align: center; font: 12px -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    letter-spacing: .08em; color: rgba(190, 205, 255, .35); pointer-events: none; }
 </style></head>
-<body><main id="m">
-  <div class="brand">Auto Meet</div><div class="who" id="who"></div>
-  <div class="state" id="state"></div><div class="timer" id="timer">--:--:--</div>
-  <div class="label" id="label"></div>
-  <ul id="list"></ul>
-  <div class="hint">Ця вкладка — довідкова: програма сама відкриває пари в Meet і виходить за розкладом.<br>Браузер можна згорнути, не вимикайте комп'ютер.</div>
-</main>
+<body><canvas id="c"></canvas><div class="tag" id="tag">Auto Meet</div>
 <script>
-  let d = { name: '', pairs: [] };
-  try { d = JSON.parse(decodeURIComponent(location.hash.slice(1))); } catch (e) { /* порожня сторінка */ }
-  const $ = (id) => document.getElementById(id);
-  const hm = (ms) => new Date(ms).toTimeString().slice(0, 5);
-  const fmt = (ms) => { const s = Math.max(0, Math.floor(ms / 1000)); const p = (n) => String(n).padStart(2, '0');
-    return `${p(Math.floor(s / 3600))}:${p(Math.floor(s % 3600 / 60))}:${p(s % 60)}`; };
-  $('who').textContent = d.name || '';
-  const list = $('list');
-  d.pairs.forEach((p) => { const li = document.createElement('li'); li.dataset.s = p.start; li.dataset.e = p.end;
-    li.innerHTML = '<span class="t"></span><span class="n"></span>';
-    li.querySelector('.t').textContent = `${hm(p.start)}–${hm(p.end)}`; li.querySelector('.n').textContent = `№${p.pair} · ${p.label}`; list.append(li); });
-  if (!d.pairs.length) list.hidden = true;
-  function tick() {
-    const now = Date.now();
-    const cur = d.pairs.find((p) => p.start <= now && now < p.end);
-    const next = d.pairs.find((p) => p.start > now);
-    const m = $('m'); m.className = cur ? 'during' : next ? '' : 'none';
-    if (cur) { $('state').innerHTML = '<span class="dot"></span>Йде пара · до завершення'; $('timer').textContent = fmt(cur.end - now); $('label').textContent = cur.label; }
-    else if (next) { $('state').innerHTML = '<span class="dot"></span>До наступної пари'; $('timer').textContent = fmt(next.start - now); $('label').textContent = next.label; }
-    else { $('state').innerHTML = '<span class="dot"></span>На сьогодні пар більше немає'; $('timer').textContent = ''; $('label').textContent = ''; }
-    list.querySelectorAll('li').forEach((li) => { li.className = now >= +li.dataset.e ? 'past' : (now >= +li.dataset.s ? 'now' : ''); });
+  try { const d = JSON.parse(decodeURIComponent(location.hash.slice(1))); if (d.name) document.getElementById('tag').textContent = 'Auto Meet · ' + d.name; } catch (e) { /* без підпису */ }
+  const cv = document.getElementById('c'), g = cv.getContext('2d');
+  let W = 0, H = 0, dpr = 1;
+  const stars = Array.from({ length: 90 }, () => ({ x: Math.random(), y: Math.random() * .6, r: Math.random() * 1.2 + .3, p: Math.random() * 6.28, s: .4 + Math.random() * .8 }));
+  const layers = [ // колір, висота (частка), амплітуда, довжина хвилі, швидкість
+    ['rgba(32, 62, 120, .55)', .60, 26, 520, .18], ['rgba(36, 78, 140, .55)', .66, 30, 420, .26],
+    ['rgba(40, 96, 156, .6)', .72, 34, 360, .34], ['rgba(30, 112, 160, .65)', .79, 30, 300, .42],
+    ['rgba(16, 70, 112, .85)', .87, 26, 240, .52],
+  ];
+  function resize() { dpr = Math.min(2, window.devicePixelRatio || 1); W = innerWidth; H = innerHeight; cv.width = W * dpr; cv.height = H * dpr; g.setTransform(dpr, 0, 0, dpr, 0, 0); }
+  addEventListener('resize', resize); resize();
+  let last = 0;
+  function frame(t) {
+    requestAnimationFrame(frame);
+    if (t - last < 33) return; last = t; // ~30 кадрів/с — щоб не гріти ноутбук
+    const s = t / 1000;
+    const sky = g.createLinearGradient(0, 0, 0, H);
+    sky.addColorStop(0, '#060a18'); sky.addColorStop(.55, '#0d1b3a'); sky.addColorStop(1, '#10305a');
+    g.fillStyle = sky; g.fillRect(0, 0, W, H);
+    for (const st of stars) { g.globalAlpha = .25 + .6 * (.5 + .5 * Math.sin(s * st.s + st.p)); g.fillStyle = '#dfe8ff'; g.beginPath(); g.arc(st.x * W, st.y * H, st.r, 0, 6.28); g.fill(); }
+    g.globalAlpha = 1;
+    const mx = W * .78, my = H * .2, mr = Math.min(W, H) * .055; // місяць
+    const halo = g.createRadialGradient(mx, my, mr * .6, mx, my, mr * 4.5);
+    halo.addColorStop(0, 'rgba(190,210,255,.28)'); halo.addColorStop(1, 'rgba(190,210,255,0)');
+    g.fillStyle = halo; g.fillRect(mx - mr * 5, my - mr * 5, mr * 10, mr * 10);
+    g.fillStyle = '#e8eeff'; g.beginPath(); g.arc(mx, my, mr, 0, 6.28); g.fill();
+    layers.forEach(([col, y0, amp, len, sp], i) => {
+      g.fillStyle = col; g.beginPath(); g.moveTo(0, H);
+      for (let x = 0; x <= W + 8; x += 8) {
+        const y = H * y0 + Math.sin(x / len * 6.28 + s * sp * 2 + i) * amp + Math.sin(x / (len * .43) * 6.28 - s * sp * 1.3) * amp * .35;
+        g.lineTo(x, y);
+      }
+      g.lineTo(W, H); g.closePath(); g.fill();
+    });
   }
-  tick(); setInterval(tick, 1000);
+  requestAnimationFrame(frame);
 </script></body></html>

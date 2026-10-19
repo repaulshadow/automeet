@@ -15,7 +15,7 @@ const { Engine } = require('../src/engine');
   const pg = ctx.pages()[0];
   const url = pg.url();
   console.log('url:', url.slice(0, 60));
-  console.log('title:', await pg.title(), '| who:', await pg.locator('#who').innerText());
+  console.log('title:', await pg.title(), '| tag:', await pg.locator('#tag').innerText());
   await pg.screenshot({ path: (process.env.SHOTS || '/tmp/am-test') + '/8-browser-home.png' });
   await engine.shutdown();
   const ok = url.startsWith('file://') && (await Promise.resolve(true));
