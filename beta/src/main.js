@@ -1,5 +1,5 @@
 'use strict';
-const { app, BrowserWindow, Tray, Menu, Notification, dialog, ipcMain, nativeImage, powerSaveBlocker, shell } = require('electron');
+const { app, BrowserWindow, Tray, Menu, Notification, dialog, ipcMain, nativeImage, powerSaveBlocker, powerMonitor, shell } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const L = require('./logic');
@@ -15,6 +15,10 @@ const IS_STARTUP = process.argv.includes('--startup');
 const VERSION = app.getVersion();
 
 if (!app.requestSingleInstanceLock()) { app.quit(); }
+
+// Фонова програма не повинна падати з вікном помилки через випадковий збій: пишемо в журнал і працюємо далі.
+process.on('uncaughtException', (e) => { try { store && store.log('Необроблена помилка: ' + (e && e.stack || e)); } catch { /* ok */ } });
+process.on('unhandledRejection', (e) => { try { store && store.log('Необроблена відмова: ' + (e && e.stack || e)); } catch { /* ok */ } });
 
 let win = null;
 let tray = null;
@@ -531,6 +535,8 @@ app.whenReady().then(async () => {
   }
   createWindow();
   createTray();
+  // після пробудження комп'ютера одразу перевіряємо, чи не йде пара
+  powerMonitor.on('resume', () => { store.log('Комп\'ютер прокинувся'); for (const e of engines.values()) e.tick().catch(() => {}); });
   win.webContents.once('did-finish-load', async () => {
     store.updateSchedule().then((changed) => { if (changed) reloadAllAfterScheduleUpdate(); });
     scheduleAppChecks();

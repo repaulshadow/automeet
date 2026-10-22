@@ -16,7 +16,8 @@ class Store {
     this.stateFile = path.join(dataDir, 'state.json');
     this.scheduleFile = path.join(dataDir, 'schedule.json');
     this.logFile = path.join(dataDir, 'auto_meet.log');
-    this.state = this._readJson(this.stateFile, {});
+    // якщо state.json пошкоджено (вимкнули світло під час запису) — беремо останню резервну копію
+    this.state = this._readJson(this.stateFile, null) || this._readJson(this.stateFile + '.bak', null) || {};
     this.migrate();
   }
 
@@ -70,7 +71,10 @@ class Store {
     fs.renameSync(tmp, file);
   }
 
-  save() { this._writeJson(this.stateFile, this.state); }
+  save() {
+    try { if (fs.existsSync(this.stateFile)) fs.copyFileSync(this.stateFile, this.stateFile + '.bak'); } catch { /* ok */ }
+    this._writeJson(this.stateFile, this.state);
+  }
   reset() { this.state = {}; try { fs.unlinkSync(this.stateFile); } catch { /* ok */ } }
 
   loadSchedule() {

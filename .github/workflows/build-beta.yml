@@ -32,6 +32,23 @@ jobs:
         run: npm version "${GITHUB_REF_NAME#v}" --no-git-tag-version --allow-same-version
       - run: TZ=Europe/Kyiv npm test
 
+  smoke:
+    # Повні перевірки на справжньому Chromium і Electron (макетні Meet/Classroom): рушій, збої, UI, пакетована збірка.
+    runs-on: ubuntu-latest
+    defaults: { run: { working-directory: beta } }
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with: { node-version: 22, cache: npm, cache-dependency-path: beta/package-lock.json }
+      - run: npm ci
+      - name: Chromium для тестів
+        run: npx playwright-core install --with-deps chromium
+      - name: Збірка пакета (linux, без інсталятора)
+        run: npx electron-builder --linux dir -c.linux.target=dir -c.directories.output=/tmp/am-pkg
+        env: { CSC_IDENTITY_AUTO_DISCOVERY: "false" }
+      - name: Усі перевірки
+        run: sudo apt-get install -y xvfb >/dev/null 2>&1 || true; PKG_EXE=/tmp/am-pkg/linux-unpacked/automeet-beta bash test/run-all.sh
+
   mac:
     needs: test
     runs-on: macos-latest
@@ -105,7 +122,7 @@ jobs:
   release:
     # Публікує інсталятори у GitHub Release з ПОСТІЙНИМИ іменами файлів
     if: startsWith(github.ref, 'refs/tags/v')
-    needs: [mac, windows]
+    needs: [mac, windows, smoke]
     runs-on: ubuntu-latest
     permissions:
       contents: write

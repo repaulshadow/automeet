@@ -376,7 +376,7 @@ class Engine extends EventEmitter {
     try {
       await page.goto(courseUrl);
       let meetHref = null;
-      for (let i = 0; i < 20 && !meetHref; i++) {
+      for (let i = 0; i < Math.max(1, Math.round((this.linkWaitMs ?? 20000) / 1000)) && !meetHref; i++) {
         meetHref = await page.evaluate(() => document.querySelector('a[href*="meet.google.com/"]')?.href || null);
         if (!meetHref) await page.waitForTimeout(1000);
       }
@@ -410,7 +410,7 @@ class Engine extends EventEmitter {
         'button:has-text("Join now")', 'button:has-text("Ask to join")',
         'button:has-text("Приєднатися")', 'button:has-text("Попросити приєднатися")',
         'button:has-text("Присоединиться")', 'button:has-text("Попросить войти")'], 15000);
-      if (!ok) this.notify(`Не знайшов кнопку входу: ${name}`);
+      if (!ok) { this.log(`Не знайшов кнопку входу: ${name}`); return false; }
 
       const sched = this.sched || this.store.loadSchedule();
       const day = L.startOfDay(new Date(endTime - 60000));
@@ -418,9 +418,10 @@ class Engine extends EventEmitter {
       await sleep(Math.max(0, L.leaveTime(sched, endTime, starts) - Date.now()));
       await this.clickFirst(page, ['[aria-label*="Leave call" i]', '[aria-label*="Вийти з дзвінка" i]',
         '[aria-label*="Покинуть" i]'], 3000);
+      return true;
     } catch (e) {
       this.log('Помилка: ' + e.message);
-      this.notify(`Не вдалося зайти: ${name}`);
+      return false;
     } finally {
       try { await page.close(); } catch { /* ok */ }
       this.busy.delete(name);
@@ -430,12 +431,25 @@ class Engine extends EventEmitter {
     }
   }
 
+  /** Заходить на пару з повторами: якщо вхід не вдався (немає посилання, збій мережі), пробує ще
+   *  кілька разів, поки до кінця пари лишається більше 5 хвилин. Повідомляє лише про остаточну невдачу. */
+  async attendReliably(name, courseUrl, endTime) {
+    for (let attempt = 1; attempt <= 4; attempt++) {
+      if (await this.attend(name, courseUrl, endTime)) return true;
+      if (endTime - Date.now() < 5 * 60000) break;
+      if (attempt < 4) { this.log(`Повторна спроба входу (${attempt}/3): ${name}`); await sleep(this.retryPauseMs ?? 30000); }
+    }
+    this.notify(`Не вдалося зайти: ${name}`);
+    return false;
+  }
+
   // ---------- планувальник ----------
   start() {
     this.stop();
     this.setStatus('Чекаю наступної пари');
-    this.tick();
-    this.timer = setInterval(() => this.tick(), 20000);
+    const run = () => this.tick().catch((e) => this.log('Планувальник: ' + e.message));
+    run();
+    this.timer = setInterval(run, 20000);
   }
   stop() { clearInterval(this.timer); this.timer = null; }
 
@@ -508,7 +522,7 @@ class Engine extends EventEmitter {
     const url = (st.map || {})[chosen];
     if (!url) { this.notify(`Немає курсу для «${chosen}». Відкрийте Налаштування → Прив'язати курси.`); return; }
     await sleep(Math.max(0, start.getTime() - JOIN_BEFORE_MIN * 60000 - Date.now()));
-    await this.attend(chosen, url, end.getTime());
+    await this.attendReliably(chosen, url, end.getTime());
   }
 
   // ---------- заміна пари ----------
@@ -538,7 +552,7 @@ class Engine extends EventEmitter {
     this.log(`Заміна додана: ${label}`);
     (async () => {
       await sleep(Math.max(0, start - JOIN_BEFORE_MIN * 60000 - Date.now()));
-      await this.attend(label, url, end);
+      await this.attendReliably(label, url, end);
     })();
     this.emit('status', this.currentStatus());
   }
